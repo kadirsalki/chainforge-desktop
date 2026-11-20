@@ -1,0 +1,66 @@
+*{-fx-font-family:"Inter","SF Pro Display","Segoe UI",sans-serif}.app{-fx-background-color:#0b0f17}.sidebar{-fx-background-color:#0d131e;-fx-border-color:#1d2735;-fx-border-width:0 1 0 0}.mark{-fx-background-color:linear-gradient(to bottom right,#6b7cff,#8b5cf6);-fx-background-radius:11;-fx-text-fill:white;-fx-font-size:20px;-fx-font-weight:900;-fx-min-width:38;-fx-min-height:38;-fx-alignment:center}.brand{ -fx-text-fill:#f3f6fc;-fx-font-size:13px;-fx-font-weight:900}.caption{ -fx-text-fill:#66758b;-fx-font-size:9px;-fx-font-weight:bold;-fx-letter-spacing:1px}.nav{ -fx-background-color:transparent;-fx-text-fill:#91a0b5;-fx-font-size:12px;-fx-alignment:center-left;-fx-padding:12 13;-fx-background-radius:9;-fx-cursor:hand}.nav:hover,.quick:hover{-fx-background-color:#1b293b;-fx-text-fill:#f1f5fc}.nav.active{-fx-background-color:#202d47;-fx-text-fill:#b5c2ff;-fx-font-weight:bold}.network,.panel,.stat{-fx-background-color:#111a27;-fx-border-color:#202d3e;-fx-border-radius:12;-fx-background-radius:12}.network{-fx-padding:13}.topbar{-fx-background-color:#0e1520;-fx-border-color:#202a39;-fx-border-width:0 0 1 0}.page-title{-fx-text-fill:#eaf0fa;-fx-font-size:15px;-fx-font-weight:bold}.pill{-fx-background-color:#152b2a;-fx-text-fill:#57d6ad;-fx-padding:7 10;-fx-background-radius:18;-fx-font-size:9px;-fx-font-weight:bold}.secondary,.quick{-fx-background-color:#182333;-fx-text-fill:#c4d0e2;-fx-border-color:#2a394d;-fx-border-radius:8;-fx-background-radius:8;-fx-padding:10 13}.content{-fx-background-color:#0b0f17}.hero{-fx-text-fill:#f1f5fc;-fx-font-size:25px;-fx-font-weight:bold}.muted{-fx-text-fill:#8290a5;-fx-font-size:12px}.primary{-fx-background-color:#687cf6;-fx-text-fill:white;-fx-font-weight:bold;-fx-padding:11 16;-fx-background-radius:8}.stat{-fx-padding:18}.panel-label{-fx-text-fill:#8493aa;-fx-font-size:9px;-fx-font-weight:bold;-fx-letter-spacing:1px}.stat-value{-fx-text-fill:#f1f5fc;-fx-font-size:25px;-fx-font-weight:bold}.balance{-fx-text-fill:#f2f6ff;-fx-font-size:32px;-fx-font-weight:bold}.section{-fx-text-fill:#e5ecf7;-fx-font-size:14px;-fx-font-weight:bold}.empty{-fx-text-fill:#c6d1e1;-fx-font-size:13px;-fx-font-weight:bold}.foot{-fx-text-fill:#5f7188;-fx-font-size:9px;-fx-letter-spacing:1px}.text-field,.password-field,.text-area,.combo-box,.list-view{-fx-background-color:#111a27;-fx-control-inner-background:#111a27;-fx-text-fill:#eaf0fa;-fx-prompt-text-fill:#64748b;-fx-border-color:#2a394d;-fx-border-radius:8;-fx-background-radius:8;-fx-padding:8 10}.text-area .content{-fx-background-color:#111a27}.list-cell{-fx-background-color:#111a27;-fx-text-fill:#dce5f2}.list-cell:filled:selected{-fx-background-color:#263654}.combo-box .list-cell{-fx-background-color:#111a27;-fx-text-fill:#eaf0fa}.label{-fx-text-fill:#dce5f2}.separator *.line{-fx-border-color:#263244}.hyperlink{-fx-text-fill:#91a7ff}
+.page-scroll{-fx-background:#0b0f17;-fx-background-color:#0b0f17}.page-scroll > .viewport{-fx-background-color:#0b0f17}.page-scroll > .scroll-bar:vertical{-fx-background-color:#0b0f17}
+
+/* Shared dark styling for JavaFX dialogs and native controls */
+.dialog-pane,.app-dialog{-fx-background-color:#101927;-fx-border-color:#29384d;-fx-border-width:1;-fx-border-radius:14;-fx-background-radius:14}
+.dialog-pane:header .header-panel{-fx-background-color:#101927;-fx-padding:18 20 10 20}
+.dialog-pane:header .header-panel .label{-fx-text-fill:#eef3fc;-fx-font-size:16px;-fx-font-weight:bold}
+.dialog-pane > .content.label{-fx-background-color:#101927;-fx-text-fill:#a9b7cb;-fx-font-size:13px;-fx-padding:12 20 18 20}
+.dialog-pane .button-bar{-fx-background-color:#101927;-fx-padding:10 18 16 18}
+.dialog-pane .button{-fx-background-color:#1b293b;-fx-text-fill:#dce6f5;-fx-border-color:#33445d;-fx-border-radius:8;-fx-background-radius:8;-fx-padding:9 16;-fx-cursor:hand}
+.dialog-pane .button:default{-fx-background-color:#687cf6;-fx-text-fill:white;-fx-border-color:#687cf6;-fx-font-weight:bold}
+.dialog-pane .button:hover{-fx-background-color:#293b55}
+.dialog-pane .button:default:hover{-fx-background-color:#7d8dff}
+.dialog-pane .text-field,.dialog-pane .password-field{-fx-background-color:#0c1420;-fx-control-inner-background:#0c1420;-fx-text-fill:#edf3fc;-fx-prompt-text-fill:#718198;-fx-border-color:#33445d;-fx-border-radius:8;-fx-background-radius:8}
+.stat-value{-fx-font-size:28px}
+.monitor-pill{-fx-background-color:#173b35;-fx-text-fill:#61dfb7;-fx-padding:8 13;-fx-background-radius:18;-fx-font-size:10px;-fx-font-weight:bold}
+.monitor-progress .bar{-fx-background-color:linear-gradient(to right,#687cf6,#4bd5a9);-fx-background-radius:8}
+.monitor-progress .track{-fx-background-color:#202d40;-fx-background-radius:8}
+.metric-card{-fx-background-color:#121e2d;-fx-border-color:#29384d;-fx-border-radius:10;-fx-background-radius:10;-fx-padding:13;-fx-min-width:110}
+.metric-value{-fx-text-fill:#e9f0fb;-fx-font-size:23px;-fx-font-weight:bold}
+.status-pill{-fx-background-color:#1b2b40;-fx-text-fill:#a9bcff;-fx-padding:6 10;-fx-background-radius:15;-fx-font-size:10px;-fx-font-weight:bold}
+
+/* Consistent interaction sizing and clearer focus states */
+.button{-fx-min-height:36;-fx-cursor:hand;-fx-font-size:12px}
+.primary{-fx-min-height:40;-fx-padding:11 18;-fx-background-radius:9}
+.secondary{-fx-min-height:36;-fx-padding:9 14;-fx-background-radius:9}
+.text-field,.password-field,.combo-box{-fx-min-height:38}
+.button:focused,.text-field:focused,.password-field:focused,.combo-box:focused{-fx-border-color:#7187ff;-fx-border-width:1.4}
+
+/* Portfolio-first wallet cards and calmer network identity */
+.wallet-name{-fx-text-fill:#f0f5ff;-fx-font-size:16px;-fx-font-weight:700}
+.network-eyebrow{-fx-text-fill:#7f9bbd;-fx-font-size:10px;-fx-font-weight:700}
+.balance-tile{-fx-background-color:linear-gradient(to bottom right,#17283b,#111d2b);-fx-border-color:#2b4058;-fx-border-radius:12;-fx-background-radius:12;-fx-padding:15;-fx-min-height:88}
+.balance-value{-fx-text-fill:#f3f7ff;-fx-font-size:23px;-fx-font-weight:700}
+
+
+/* Compact simulator layout and transaction cards */
+.transaction-card{-fx-background-color:#121e2d;-fx-border-color:#29384d;-fx-border-radius:11;-fx-background-radius:11;-fx-padding:14;-fx-min-width:280}
+.transaction-amount{-fx-text-fill:#f1f5fc;-fx-font-size:13px;-fx-font-weight:bold}
+.tx-status-success{-fx-background-color:#173b35;-fx-text-fill:#61dfb7;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.tx-status-failed{-fx-background-color:#40242b;-fx-text-fill:#ff9aa8;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.tx-status-pending{-fx-background-color:#3b321e;-fx-text-fill:#f4cb76;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.polling-indicator{-fx-text-fill:#61dfb7;-fx-font-size:11px}
+
+
+/* Network center: scannable cards, explicit state and compact metadata */
+.network-card,.recipient-card{-fx-background-color:#121e2d;-fx-border-color:#29384d;-fx-border-radius:13;-fx-background-radius:13;-fx-padding:15}
+.network-card{-fx-min-height:205}
+.network-card-title{-fx-text-fill:#f0f5ff;-fx-font-size:15px;-fx-font-weight:700}
+.network-glyph{-fx-background-color:#202d47;-fx-background-radius:11;-fx-text-fill:#aebcff;-fx-font-size:20px;-fx-min-width:40;-fx-min-height:40;-fx-alignment:center}
+.network-state-active{-fx-background-color:#173b35;-fx-text-fill:#61dfb7;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.network-state-disabled{-fx-background-color:#3a2c2e;-fx-text-fill:#e9a4a4;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.network-detail-label{-fx-text-fill:#74869e;-fx-font-size:9px;-fx-font-weight:bold}
+.network-detail-value{-fx-text-fill:#cbd7e8;-fx-font-size:11px}
+.recipient-card{-fx-min-height:105}
+
+/* Information hierarchy and responsive dashboard polish */
+.content{-fx-padding:30 32 36 32}
+.stat{-fx-min-height:92;-fx-spacing:9}
+.panel{-fx-padding:19;-fx-border-radius:13;-fx-background-radius:13}
+.hero{-fx-font-size:27}
+.section{-fx-font-size:13}
+.network-card,.recipient-card,.transaction-card,.panel,.stat{-fx-effect:dropshadow(gaussian,rgba(0,0,0,0.13),12,0,0,3)}
+.network-card .button,.recipient-card .button{-fx-min-height:34}
+.text-area{-fx-border-radius:9;-fx-background-radius:9}
+.list-view:focused,.text-area:focused{-fx-border-color:#7187ff}
