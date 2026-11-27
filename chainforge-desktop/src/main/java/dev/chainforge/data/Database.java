@@ -42,15 +42,30 @@ public final class Database {
                 if (!hasDirection) s.execute("ALTER TABLE transactions ADD COLUMN direction TEXT DEFAULT 'OUT'");
                 s.execute("UPDATE transactions SET direction='OUT' WHERE direction IS NULL OR direction=''");
                 // Migration: outgoing transfers remember which simulation batch sent them (for the post-simulation summary).
-                boolean hasJob = false;
+                boolean hasJob = false, hasTokenSymbol = false, hasRetrySource = false;
                 try (ResultSet cols = s.executeQuery("PRAGMA table_info(transactions)")) {
-                    while (cols.next()) if ("job_id".equalsIgnoreCase(cols.getString("name"))) hasJob = true;
+                    while (cols.next()) {
+                        String column = cols.getString("name");
+                        if ("job_id".equalsIgnoreCase(column)) hasJob = true;
+                        if ("token_symbol".equalsIgnoreCase(column)) hasTokenSymbol = true;
+                        if ("retry_of".equalsIgnoreCase(column)) hasRetrySource = true;
+                    }
                 }
                 if (!hasJob) s.execute("ALTER TABLE transactions ADD COLUMN job_id INTEGER");
+                if (!hasTokenSymbol) s.execute("ALTER TABLE transactions ADD COLUMN token_symbol TEXT");
+                if (!hasRetrySource) s.execute("ALTER TABLE transactions ADD COLUMN retry_of INTEGER");
+                s.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_retry_source ON transactions(retry_of) WHERE retry_of IS NOT NULL");
                 s.execute("CREATE INDEX IF NOT EXISTS idx_tx_job ON transactions(job_id)");
                 // One row per received (tx, wallet, asset); makes repeated syncs idempotent.
                 s.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_incoming ON transactions(network_key,tx_hash,to_address,asset) WHERE direction='IN'");
                 s.execute("CREATE TABLE IF NOT EXISTS simulation_jobs(id INTEGER PRIMARY KEY,network_key TEXT NOT NULL,status TEXT NOT NULL,recipient_count INTEGER DEFAULT 0,completed_count INTEGER DEFAULT 0,failed_count INTEGER DEFAULT 0,config_json TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+                s.execute("""
+                        CREATE TABLE IF NOT EXISTS simulation_templates(
+                            name TEXT PRIMARY KEY COLLATE NOCASE, network_key TEXT NOT NULL, asset TEXT NOT NULL,
+                            group_id INTEGER NOT NULL, min_amount TEXT NOT NULL, max_amount TEXT NOT NULL,
+                            min_delay TEXT NOT NULL, min_unit TEXT NOT NULL, max_delay TEXT NOT NULL, max_unit TEXT NOT NULL)
+                        """);
+                s.execute("CREATE TABLE IF NOT EXISTS incoming_sync_history(network_key TEXT PRIMARY KEY, succeeded_at TEXT NOT NULL)");
                 s.execute("INSERT OR IGNORE INTO networks(name,family,network_key,chain_id,rpc_url,explorer_url,is_testnet) VALUES('Ethereum Sepolia','EVM','ethereum-sepolia','11155111','https://ethereum-sepolia-rpc.publicnode.com','https://sepolia.etherscan.io',1)");
                 s.execute("INSERT OR IGNORE INTO networks(name,family,network_key,chain_id,rpc_url,explorer_url,is_testnet) VALUES('Solana Devnet','SOLANA','solana-devnet',NULL,'https://api.devnet.solana.com','https://explorer.solana.com',1)");
                 // Migration: each network carries the ticker of its native coin (ETH, AVAX, SOL, BTC, XRP, ...).

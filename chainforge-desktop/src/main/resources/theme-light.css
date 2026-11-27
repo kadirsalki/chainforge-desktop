@@ -1,0 +1,118 @@
+/* Loaded after the shared stylesheet for light windows and dialogs. */
+.root, .app, .app-dialog {
+    -fx-base: #e9eef6;
+    -fx-background: #f4f6fb;
+    -fx-control-inner-background: white;
+    -fx-control-inner-background-alt: #f5f7fb;
+    -fx-text-background-color: #17243b;
+    -fx-accent: #465bc5;
+    -fx-focus-color: #465bc5;
+    -fx-faint-focus-color: rgba(70, 91, 197, 0.14);
+}
+
+.app, .content, .page-scroll, .page-scroll > .viewport, .page-scroll > .scroll-bar:vertical {
+    -fx-background-color: #f4f6fb;
+}
+.sidebar, .topbar {
+    -fx-background-color: #fff;
+    -fx-border-color: #dce3ee;
+}
+.panel, .stat, .network, .network-card, .recipient-card, .transaction-card {
+    -fx-background-color: #fff;
+    -fx-border-color: #dce3ee;
+    -fx-effect: null;
+}
+.balance-tile, .metric-card, .sim-side {
+    -fx-background-color: #eff3fa;
+    -fx-border-color: #dce3ee;
+}
+.separator *.line { -fx-border-color: #dce3ee; }
+
+.label, .brand, .hero, .section, .empty, .stat-value, .balance, .balance-value,
+.wallet-name, .network-card-title, .metric-value, .transaction-amount, .page-title {
+    -fx-text-fill: #17243b;
+}
+.muted, .caption, .foot, .panel-label, .network-eyebrow, .network-detail-label, .network-detail-value {
+    -fx-text-fill: #465872;
+}
+.nav { -fx-text-fill: #465872; }
+.nav:hover, .quick:hover { -fx-background-color: #e7edf7; -fx-text-fill: #17243b; }
+.nav.active, .network-glyph { -fx-background-color: #e3e9ff; -fx-text-fill: #283f9c; }
+.mark, .primary, .wallet-menu.primary > .label { -fx-text-fill: white; }
+.mark { -fx-background-color: linear-gradient(to bottom right, #465bc5, #7452cf); }
+.primary, .dialog-pane .button:default { -fx-background-color: #465bc5; -fx-border-color: #465bc5; }
+.primary:hover, .dialog-pane .button:default:hover { -fx-background-color: #374ba8; }
+.secondary, .quick, .dialog-pane .button {
+    -fx-background-color: #edf1f8;
+    -fx-border-color: #cbd6e7;
+    -fx-text-fill: #263651;
+}
+.secondary:hover, .dialog-pane .button:hover { -fx-background-color: #dfe7f4; }
+.hyperlink { -fx-text-fill: #3047a9; }
+.button:focused, .menu-button:focused, .toggle-button:focused,
+.text-field:focused, .password-field:focused, .combo-box:focused, .list-view:focused, .text-area:focused {
+    -fx-border-color: #465bc5;
+}
+.text-field, .password-field, .text-area, .combo-box, .list-view,
+.dialog-pane .text-field, .dialog-pane .password-field, .tx-filter-panel .date-picker {
+    -fx-background-color: #fff;
+    -fx-control-inner-background: #fff;
+    -fx-text-fill: #17243b;
+    -fx-prompt-text-fill: #546680;
+    -fx-border-color: #bcc9dd;
+}
+.text-area .content, .list-cell, .combo-box .list-cell { -fx-background-color: #fff; -fx-text-fill: #17243b; }
+.list-cell:filled:selected, .list-cell:filled:hover,
+.combo-box-popup .list-view .list-cell:filled:selected,
+.combo-box-popup .list-view .list-cell:filled:hover { -fx-background-color: #e3e9ff; -fx-text-fill: #243787; }
+.tx-filter-panel .date-picker .arrow-button { -fx-background-color: #e7edf7; }
+.tx-filter-panel .date-picker .arrow-button .arrow,
+.tx-filter-panel .combo-box .arrow-button .arrow { -fx-background-color: #465872; }
+.tx-direction-switch { -fx-background-color: #edf1f8; }
+.filter-toggle { -fx-background-color: #edf1f8; -fx-text-fill: #3d506c; }
+.tx-direction-switch .filter-toggle { -fx-background-color: transparent; -fx-text-fill: #3d506c; }
+.tx-direction-switch .filter-toggle:hover { -fx-background-color: #dfe7f4; }
+.filter-toggle:selected, .tx-direction-switch .filter-toggle:selected {
+    -fx-background-color: #465bc5;
+    -fx-text-fill: white;
+}
+
+.pill, .monitor-pill, .tx-status-success, .tx-dir-in, .network-state-active {
+    -fx-background-color: #def4eb;
+    -fx-text-fill: #116147;
+}
+.status-pill, .tx-dir-out { -fx-background-color: #e4eaff; -fx-text-fill: #3047a9; }
+.tx-status-failed, .network-state-disabled { -fx-background-color: #fae7ea; -fx-text-fill: #972b3f; }
+.tx-status-pending { -fx-background-color: #fff0cd; -fx-text-fill: #754700; }
+.text-success, .transaction-amount-in, .polling-indicator { -fx-text-fill: #116147; }
+.text-warning { -fx-text-fill: #754700; }
+.monitor-progress .track { -fx-background-color: #dce3ee; }
+
+.transaction-table, .sim-table {
+    -fx-background-color: #fff;
+    -fx-control-inner-background: #fff;
+    -fx-control-inner-background-alt: #f5f7fb;
+    -fx-table-cell-border-color: #dce3ee;
+    -fx-border-color: #cbd6e7;
+}
+.transaction-table .column-header-background, .transaction-table .column-header, .transaction-table .filler,
+.sim-table .column-header, .sim-table .filler { -fx-background-color: #e7edf7; -fx-border-color: #dce3ee; }
+.transaction-table .column-header .label, .sim-table .column-header .label { -fx-text-fill: #354861; }
+.transaction-table .table-row-cell:filled, .transaction-table .table-row-cell:empty,
+.transaction-table .virtual-flow .corner { -fx-background-color: #fff; }
+.transaction-table .table-row-cell:filled:odd { -fx-background-color: #f5f7fb; }
+.transaction-table .table-row-cell:filled:hover { -fx-background-color: #edf1ff; }
+.transaction-table .table-row-cell:filled:selected, .sim-table .table-row-cell:selected { -fx-background-color: #e3e9ff; }
+.transaction-table .table-cell, .sim-table .table-cell, .sim-table .table-row-cell:selected .table-cell { -fx-text-fill: #17243b; }
+
+.dialog-pane, .app-dialog, .dialog-pane:header .header-panel, .dialog-pane > .content.label,
+.dialog-pane .button-bar { -fx-background-color: #fff; -fx-border-color: #dce3ee; }
+.dialog-pane:header .header-panel .label { -fx-text-fill: #17243b; }
+.dialog-pane > .content.label { -fx-text-fill: #465872; }
+.wallet-menu > .label, .wallet-menu-item > .label { -fx-text-fill: #263651; }
+.wallet-menu.secondary > .arrow-button > .arrow { -fx-background-color: #465872; }
+.wallet-menu .context-menu, .wallet-menu-item { -fx-background-color: #fff; -fx-border-color: #dce3ee; }
+.wallet-menu-item:focused { -fx-background-color: #e3e9ff; }
+.wallet-delete { -fx-background-color: transparent; -fx-border-color: transparent; -fx-text-fill: #972b3f; }
+.wallet-delete:hover { -fx-background-color: #fae7ea; }
+.sim-side:focused {-fx-border-color: #465bc5;}

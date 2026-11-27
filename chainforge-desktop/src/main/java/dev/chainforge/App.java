@@ -24,6 +24,7 @@ public class App extends Application {
             }
         }
         stage.setTitle("ChainForge Desktop");
+        stage.setFullScreen(true);
         stage.show();
     }
 

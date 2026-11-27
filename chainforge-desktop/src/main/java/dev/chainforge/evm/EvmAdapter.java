@@ -11,11 +11,15 @@ import org.web3j.abi.datatypes.Utf8String;
 import org.web3j.abi.datatypes.generated.Uint256;
 import org.web3j.abi.datatypes.generated.Uint8;
 import org.web3j.crypto.Credentials;
+import org.web3j.crypto.Hash;
 import org.web3j.crypto.RawTransaction;
 import org.web3j.crypto.TransactionEncoder;
 import org.web3j.protocol.Web3j;
+import org.web3j.protocol.core.DefaultBlockParameter;
 import org.web3j.protocol.core.DefaultBlockParameterName;
+import org.web3j.protocol.core.methods.request.EthFilter;
 import org.web3j.protocol.core.methods.request.Transaction;
+import org.web3j.protocol.core.methods.response.Log;
 import org.web3j.protocol.http.HttpService;
 import org.web3j.utils.Convert;
 import org.web3j.utils.Numeric;
@@ -34,10 +38,13 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /**
  * EVM native coin and ERC-20 adapter for one configured network (Sepolia, Ethereum mainnet, ...).
@@ -45,6 +52,8 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class EvmAdapter implements ChainAdapter {
     private static final BigInteger PLAIN_TRANSFER_GAS = BigInteger.valueOf(21_000);
+    private static final BigInteger TOKEN_HISTORY_WINDOW = BigInteger.valueOf(1000);
+    private static final String TRANSFER_TOPIC = Hash.sha3String("Transfer(address,address,uint256)");
 
     private final String networkKey;
     private final String rpc;
@@ -167,9 +176,7 @@ public final class EvmAdapter implements ChainAdapter {
                     BigInteger units = amount.movePointRight(info.decimals()).setScale(0, RoundingMode.UNNECESSARY).toBigIntegerExact();
                     if (units.signum() <= 0)
                         throw new IllegalArgumentException("Token amount is below the smallest unit.");
-                    Function f = new Function("transfer", List.of(new Address(to), new Uint256(units)), List.of(new TypeReference<org.web3j.abi.datatypes.Bool>() {
-                    }));
-                    return send(w, credentials, contract, BigInteger.ZERO, FunctionEncoder.encode(f), "ERC-20 transfer");
+                    return send(w, credentials, contract, BigInteger.ZERO, tokenTransferData(to, units), "ERC-20 transfer");
                 }
                 if (amount.signum() <= 0) throw new IllegalArgumentException("Amount must be positive.");
                 validateRecipient(to);
@@ -186,6 +193,41 @@ public final class EvmAdapter implements ChainAdapter {
             throw new IllegalArgumentException("Invalid EVM address. Expected 0x followed by 40 hexadecimal characters.");
     }
 
+    public record FeeTarget(String address, BigDecimal amount) {
+    }
+
+    public BigDecimal estimateBatchFee(String sender, String asset, int decimals, List<FeeTarget> targets) throws Exception {
+        try (Web3j w = client()) {
+            var rpcId = w.ethChainId().send();
+            if (rpcId.hasError() || !BigInteger.valueOf(chainId).equals(rpcId.getChainId()))
+                throw new IllegalStateException("The RPC does not match the selected network.");
+            var price = w.ethGasPrice().send();
+            if (price.hasError()) throw new IllegalStateException(price.getError().getMessage());
+            BigInteger gasPrice = price.getGasPrice();
+            BigInteger total = BigInteger.ZERO;
+            for (FeeTarget target : targets) {
+                boolean token = isToken(asset);
+                BigInteger units = target.amount().movePointRight(decimals).toBigIntegerExact();
+                Transaction probe = token
+                        ? Transaction.createFunctionCallTransaction(sender, null, gasPrice, null,
+                                tokenContract(asset), BigInteger.ZERO, tokenTransferData(target.address(), units))
+                        : Transaction.createEtherTransaction(sender, null, gasPrice, null, target.address(), units);
+                try {
+                    total = total.add(estimatedGasLimit(w, probe, !token, "Transfer"));
+                } catch (Exception e) {
+                    throw new IllegalStateException(target.address() + ": " + root(e), e);
+                }
+            }
+            return Convert.fromWei(new BigDecimal(total.multiply(gasPrice)), Convert.Unit.ETHER);
+        }
+    }
+
+    private static String tokenTransferData(String recipient, BigInteger units) {
+        Function function = new Function("transfer", List.of(new Address(recipient), new Uint256(units)),
+                List.of(new TypeReference<org.web3j.abi.datatypes.Bool>() {}));
+        return FunctionEncoder.encode(function);
+    }
+
     /**
      * Builds, simulates, signs and broadcasts one transaction. The gas limit comes from eth_estimateGas, so
      * a transfer that would fail on-chain (for example a recipient that needs more than the flat 21,000 gas of a
@@ -199,16 +241,7 @@ public final class EvmAdapter implements ChainAdapter {
         Transaction probe = plain
                 ? Transaction.createEtherTransaction(from, nonce, gasPrice, null, target, value)
                 : Transaction.createFunctionCallTransaction(from, nonce, gasPrice, null, target, value, data);
-        var estimate = w.ethEstimateGas(probe).send();
-        if (estimate.hasError() || estimate.getAmountUsed() == null)
-            throw new IllegalStateException(what + " would fail on-chain, so it was NOT sent (no fee spent): "
-                    + (estimate.hasError() ? estimate.getError().getMessage() : "gas estimate unavailable") + ".");
-        BigInteger estimated = estimate.getAmountUsed();
-        // A plain transfer to an ordinary account estimates exactly 21,000: keep it exact. Anything more
-        // (token transfers, recipients with code) gets a 20% safety margin.
-        BigInteger gasLimit = plain && estimated.compareTo(PLAIN_TRANSFER_GAS) <= 0
-                ? estimated
-                : estimated.multiply(BigInteger.valueOf(120)).divide(BigInteger.valueOf(100));
+        BigInteger gasLimit = estimatedGasLimit(w, probe, plain, what);
         RawTransaction tx = RawTransaction.createTransaction(nonce, gasPrice, gasLimit, target, value, data == null ? "" : data);
         byte[] signed = TransactionEncoder.signMessage(tx, chainId, credentials);
         var sent = w.ethSendRawTransaction(Numeric.toHexString(signed)).send();
@@ -217,7 +250,27 @@ public final class EvmAdapter implements ChainAdapter {
         String hash = sent.getTransactionHash();
         if (hash == null || hash.isBlank())
             throw new IllegalStateException("RPC did not return a transaction hash.");
-        return awaitReceipt(w, hash, gasLimit);
+        try {
+            return awaitReceipt(w, hash, gasLimit);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new TransferResult(hash, "PENDING", null, "Receipt polling interrupted");
+        } catch (Exception e) {
+            return new TransferResult(hash, "PENDING", null, "Receipt unavailable: " + root(e));
+        }
+    }
+
+    private static BigInteger estimatedGasLimit(Web3j w, Transaction probe, boolean plain, String what) throws Exception {
+        var estimate = w.ethEstimateGas(probe).send();
+        if (estimate.hasError() || estimate.getAmountUsed() == null)
+            throw new IllegalStateException(what + " would fail on-chain, so it was NOT sent (no fee spent): "
+                    + (estimate.hasError() ? estimate.getError().getMessage() : "gas estimate unavailable") + ".");
+        BigInteger estimated = estimate.getAmountUsed();
+        // A plain transfer to an ordinary account estimates exactly 21,000: keep it exact. Anything more
+        // (token transfers, recipients with code) gets a 20% safety margin.
+        return plain && estimated.compareTo(PLAIN_TRANSFER_GAS) <= 0
+                ? estimated
+                : estimated.multiply(BigInteger.valueOf(120)).divide(BigInteger.valueOf(100));
     }
 
     @Override
@@ -285,7 +338,32 @@ public final class EvmAdapter implements ChainAdapter {
     // ---- incoming history (Etherscan-compatible indexer) ----
 
     private JsonNode indexerQuery(String action, String address) throws Exception {
-        String url = indexer + "?module=account&action=" + action + "&address=" + URLEncoder.encode(address, StandardCharsets.UTF_8)
+        if (!"tokentx".equals(action) || (chainId != 1 && chainId != 11155111))
+            return indexerQuery(indexer, action, address);
+        String fallback = chainId == 1 ? "https://eth.blockscout.com/api" : "https://eth-sepolia.blockscout.com/api";
+
+        JsonNode primary = null;
+        Exception primaryFailure = null;
+        try {
+            primary = indexerQuery(indexer, action, address);
+            if (!primary.isEmpty()) return primary;
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            primaryFailure = e;
+        }
+        try {
+            return indexerQuery(fallback, action, address);
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            if (primary != null) return primary;
+            throw new IllegalStateException("Routescan: " + root(primaryFailure) + " · Blockscout: " + root(e));
+        }
+    }
+
+    private JsonNode indexerQuery(String endpoint, String action, String address) throws Exception {
+        String url = endpoint + "?module=account&action=" + action + "&address=" + URLEncoder.encode(address, StandardCharsets.UTF_8)
                 + "&sort=desc&page=1&offset=100";
         HttpResponse<String> res = HTTP.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(25)).GET().build(), HttpResponse.BodyHandlers.ofString());
         if (res.statusCode() < 200 || res.statusCode() >= 300)
@@ -294,7 +372,7 @@ public final class EvmAdapter implements ChainAdapter {
         JsonNode result = root.path("result");
         if (result.isArray()) return result;
         String msg = root.path("message").asText("");
-        if ("0".equals(root.path("status").asText()) && msg.toLowerCase().contains("no transactions")) return JSON.createArrayNode();
+        if ("0".equals(root.path("status").asText()) && (msg + " " + result.asText()).toLowerCase(Locale.ROOT).contains("no transactions")) return JSON.createArrayNode();
         throw new IllegalStateException("History API: " + msg + " " + (result.isTextual() ? result.asText() : ""));
     }
 
@@ -304,45 +382,185 @@ public final class EvmAdapter implements ChainAdapter {
 
     @Override
     public CompletableFuture<List<IncomingTx>> fetchIncoming(String address, Set<String> knownHashes) {
+        return fetchIncoming(address, List.of(), failure -> { throw failure; });
+    }
+
+    public CompletableFuture<List<IncomingTx>> fetchIncoming(String address, List<TokenInfo> trackedTokens,
+                                                              Consumer<IllegalStateException> onSourceFailure) {
         if (indexer == null || indexer.isBlank())
             return CompletableFuture.failedFuture(new IllegalStateException("No history API configured for " + networkKey));
         return CompletableFuture.supplyAsync(() -> {
-            try {
-                String me = address.toLowerCase();
-                // hash|asset -> aggregated transfer (a transaction can pay the same wallet directly and via internal calls)
-                Map<String, IncomingTx> out = new LinkedHashMap<>();
-                java.util.function.BiConsumer<IncomingTx, BigDecimal> add = (tx, amount) -> {
-                    String k = tx.hash() + "|" + tx.asset();
-                    IncomingTx old = out.get(k);
-                    BigDecimal total = old == null ? amount : amount.add(new BigDecimal(old.amount()));
-                    out.put(k, new IncomingTx(tx.hash(), tx.from(), tx.to(), plain(total), tx.asset(), tx.status(), tx.fee(), tx.timestamp()));
-                };
-                for (String action : new String[]{"txlist", "txlistinternal"}) {
-                    for (JsonNode t : indexerQuery(action, address)) {
-                        if (!me.equalsIgnoreCase(t.path("to").asText())) continue;
-                        if (!"0".equals(t.path("isError").asText("0"))) continue; // value did not move
-                        BigDecimal wei = new BigDecimal(t.path("value").asText("0"));
-                        if (wei.signum() <= 0) continue;
-                        add.accept(new IncomingTx(t.path("hash").asText(), t.path("from").asText(), address, "0", NATIVE, "CONFIRMED", null,
-                                ChainAdapter.utc(t.path("timeStamp").asLong())), Convert.fromWei(wei, Convert.Unit.ETHER));
+            Map<String, IncomingTx> out = new LinkedHashMap<>();
+            for (String action : List.of("tokentx", "txlist", "txlistinternal")) {
+                try {
+                    if (!"tokentx".equals(action)) Thread.sleep(300);
+                    for (JsonNode row : indexerQuery(action, address)) {
+                        IncomingTx tx = incomingTransfer(row, address, "tokentx".equals(action));
+                        if (tx == null) continue;
+                        mergeTransfer(out, tx);
                     }
-                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Incoming transfer sync interrupted", e);
+                } catch (Exception e) {
+                    onSourceFailure.accept(new IllegalStateException(action + ": " + root(e), e));
                 }
-                for (JsonNode t : indexerQuery("tokentx", address)) {
-                    String contract = t.path("contractAddress").asText();
-                    // Routescan lists native transfers as a pseudo token at 0xff..fe; those are already covered above.
-                    if (contract.toLowerCase().startsWith("0xffffffffffffffffffffffffffffffffffffff")) continue;
-                    if (!me.equalsIgnoreCase(t.path("to").asText())) continue;
-                    BigDecimal raw = new BigDecimal(t.path("value").asText("0"));
-                    if (raw.signum() <= 0) continue;
-                    int decimals = t.path("tokenDecimal").asInt(0);
-                    add.accept(new IncomingTx(t.path("hash").asText(), t.path("from").asText(), address, "0", "ERC20:" + contract, "CONFIRMED", null,
-                            ChainAdapter.utc(t.path("timeStamp").asLong())), raw.movePointLeft(decimals));
-                }
-                return List.copyOf(out.values());
-            } catch (Exception e) {
-                throw new RuntimeException(e);
             }
+            if (!trackedTokens.isEmpty()) {
+                try {
+                    fetchRecentTokenLogs(address, trackedTokens).forEach(out::putIfAbsent);
+                } catch (Exception e) {
+                    onSourceFailure.accept(new IllegalStateException("ERC-20 RPC history: " + root(e), e));
+                }
+            }
+            return List.copyOf(out.values());
         });
+    }
+
+    private static void mergeTransfer(Map<String, IncomingTx> transfers, IncomingTx tx) {
+        String key = (tx.hash() + "|" + tx.to() + "|" + tx.asset()).toLowerCase(Locale.ROOT);
+        transfers.merge(key, tx, (previous, current) -> {
+            BigDecimal total = new BigDecimal(previous.amount()).add(new BigDecimal(current.amount()));
+            String symbol = current.tokenSymbol() == null ? previous.tokenSymbol() : current.tokenSymbol();
+            return new IncomingTx(current.hash(), current.from(), current.to(), plain(total),
+                    current.asset(), current.status(), current.fee(), current.timestamp(), symbol);
+        });
+    }
+
+    private Map<String, IncomingTx> fetchRecentTokenLogs(String address, List<TokenInfo> tokens) throws Exception {
+        validateAddress(address);
+        Map<String, TokenInfo> byContract = new HashMap<>();
+        for (TokenInfo token : tokens) byContract.put(token.contract().toLowerCase(Locale.ROOT), token);
+
+        Web3j web3j = client();
+        try {
+            var head = web3j.ethBlockNumber().send();
+            if (head.hasError()) throw new IllegalStateException(head.getError().getMessage());
+            BigInteger latest = head.getBlockNumber();
+            BigInteger first = latest.subtract(TOKEN_HISTORY_WINDOW).add(BigInteger.ONE).max(BigInteger.ZERO);
+            String recipientTopic = Numeric.toHexStringWithPrefixZeroPadded(Numeric.toBigInt(address), 64);
+            var filter = new EthFilter(DefaultBlockParameter.valueOf(first), DefaultBlockParameter.valueOf(latest),
+                    List.copyOf(byContract.keySet()));
+            filter.addSingleTopic(TRANSFER_TOPIC).addNullTopic().addSingleTopic(recipientTopic);
+            var response = web3j.ethGetLogs(filter).send();
+            if (response.hasError()) throw new IllegalStateException(response.getError().getMessage());
+
+            Map<String, String> timestamps = new HashMap<>();
+            Map<String, IncomingTx> transfers = new LinkedHashMap<>();
+            for (var item : response.getLogs()) {
+                if (!(item.get() instanceof Log log)) continue;
+                IncomingTx transfer = incomingTokenLog(log, Map.of(address.toLowerCase(Locale.ROOT), address), byContract);
+                if (transfer == null) continue;
+                String timestamp = timestamps.get(log.getBlockHash());
+                if (timestamp == null) {
+                    timestamp = blockTimestamp(web3j, log.getBlockHash());
+                    timestamps.put(log.getBlockHash(), timestamp);
+                }
+                mergeTransfer(transfers, withTimestamp(transfer, timestamp));
+            }
+            return transfers;
+        } finally {
+            web3j.shutdown();
+        }
+    }
+
+    public List<IncomingTx> lookupIncoming(String hash, List<String> wallets, List<TokenInfo> tokens) throws Exception {
+        if (!hash.matches("(?i)0x[0-9a-f]{64}")) throw new IllegalArgumentException("Enter a valid EVM transaction hash.");
+        Map<String, String> recipients = new HashMap<>();
+        for (String address : wallets) recipients.put(address.toLowerCase(Locale.ROOT), address);
+        Map<String, TokenInfo> contracts = new HashMap<>();
+        for (TokenInfo token : tokens) contracts.put(token.contract().toLowerCase(Locale.ROOT), token);
+        try (Web3j w = client()) {
+            var rpcId = w.ethChainId().send();
+            if (rpcId.hasError() || !BigInteger.valueOf(chainId).equals(rpcId.getChainId()))
+                throw new IllegalStateException("The RPC does not match the selected network.");
+            var response = w.ethGetTransactionReceipt(hash).send();
+            if (response.hasError()) throw new IllegalStateException(response.getError().getMessage());
+            var receipt = response.getTransactionReceipt().orElseThrow(() ->
+                    new IllegalStateException("No confirmed receipt found on this network."));
+            if (!receipt.isStatusOK()) throw new IllegalStateException("This transaction failed on-chain.");
+            String timestamp = blockTimestamp(w, receipt.getBlockHash());
+            Map<String, IncomingTx> transfers = new LinkedHashMap<>();
+            for (Log log : receipt.getLogs()) {
+                IncomingTx transfer = incomingTokenLog(log, recipients, contracts);
+                if (transfer != null) {
+                    // A single hash can pay several registered wallets.
+                    mergeTransfer(transfers, withTimestamp(transfer, timestamp));
+                }
+            }
+            String to = receipt.getTo() == null ? null : recipients.get(receipt.getTo().toLowerCase(Locale.ROOT));
+            if (to != null && !to.equalsIgnoreCase(receipt.getFrom())) {
+                var transaction = w.ethGetTransactionByHash(hash).send();
+                if (transaction.hasError()) throw new IllegalStateException(transaction.getError().getMessage());
+                var nativeTx = transaction.getTransaction().orElseThrow();
+                if (nativeTx.getValue().signum() > 0)
+                    mergeTransfer(transfers, new IncomingTx(receipt.getTransactionHash(), receipt.getFrom(), to,
+                            plain(Convert.fromWei(new BigDecimal(nativeTx.getValue()), Convert.Unit.ETHER)),
+                            NATIVE, "CONFIRMED", null, timestamp));
+            }
+            return List.copyOf(transfers.values());
+        }
+    }
+
+    private static IncomingTx incomingTokenLog(Log log, Map<String, String> recipients, Map<String, TokenInfo> contracts) {
+        if (log.isRemoved() || log.getAddress() == null || log.getTransactionHash() == null || log.getBlockHash() == null
+                || log.getTopics() == null || log.getTopics().size() != 3 || log.getData() == null
+                || !TRANSFER_TOPIC.equalsIgnoreCase(log.getTopics().get(0))
+                || !log.getData().matches("(?i)0x[0-9a-f]{64}")) return null;
+        String fromTopic = log.getTopics().get(1), toTopic = log.getTopics().get(2);
+        if (!fromTopic.matches("(?i)0x0{24}[0-9a-f]{40}") || !toTopic.matches("(?i)0x0{24}[0-9a-f]{40}")) return null;
+        String to = recipients.get(("0x" + toTopic.substring(26)).toLowerCase(Locale.ROOT));
+        String from = "0x" + fromTopic.substring(26);
+        TokenInfo token = contracts.get(log.getAddress().toLowerCase(Locale.ROOT));
+        if (to == null || token == null || to.equalsIgnoreCase(from)) return null;
+        BigInteger raw = Numeric.toBigInt(log.getData());
+        if (raw.signum() <= 0) return null;
+        return new IncomingTx(log.getTransactionHash(), from, to,
+                plain(new BigDecimal(raw, token.decimals())), tokenAsset(token.contract()),
+                "CONFIRMED", null, null, token.symbol());
+    }
+
+    private static String blockTimestamp(Web3j w, String blockHash) throws Exception {
+        var block = w.ethGetBlockByHash(blockHash, false).send();
+        if (block.hasError()) throw new IllegalStateException(block.getError().getMessage());
+        if (block.getBlock() == null) throw new IllegalStateException("Confirmed block unavailable.");
+        return ChainAdapter.utc(block.getBlock().getTimestamp().longValueExact());
+    }
+
+    private static IncomingTx withTimestamp(IncomingTx transfer, String timestamp) {
+        return new IncomingTx(transfer.hash(), transfer.from(), transfer.to(), transfer.amount(), transfer.asset(),
+                transfer.status(), transfer.fee(), timestamp, transfer.tokenSymbol());
+    }
+
+    private static IncomingTx incomingTransfer(JsonNode row, String address, boolean token) {
+        if (!address.equalsIgnoreCase(row.path("to").asText()) || !"0".equals(row.path("isError").asText("0")))
+            return null;
+        String from = row.path("from").asText();
+        String hash = row.path("hash").asText();
+        if (hash.isBlank() || address.equalsIgnoreCase(from)) return null;
+
+        String contract = row.path("contractAddress").asText();
+        int decimals = 18;
+        String symbol = null;
+        if (token) {
+            if (!contract.matches("(?i)0x[0-9a-f]{40}") || contract.toLowerCase(Locale.ROOT).startsWith("0xffffffffffffffffffffffffffffffffffffff"))
+                return null;
+            JsonNode tokenDecimal = row.path("tokenDecimal");
+            decimals = tokenDecimal.asInt(-1);
+            if (decimals < 0 || decimals > 255) return null;
+            String ticker = row.path("tokenSymbol").asText().strip();
+            if (!ticker.isBlank() && ticker.length() <= 32 && ticker.codePoints().noneMatch(c ->
+                    Character.isISOControl(c) || Character.getType(c) == Character.FORMAT)) symbol = ticker;
+        }
+        BigInteger raw;
+        try {
+            raw = new BigInteger(row.path("value").asText());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (raw.signum() <= 0) return null;
+        return new IncomingTx(hash, from, address, plain(new BigDecimal(raw, decimals)),
+                token ? "ERC20:" + contract : NATIVE, "CONFIRMED", null,
+                ChainAdapter.utc(row.path("timeStamp").asLong()), symbol);
     }
 }

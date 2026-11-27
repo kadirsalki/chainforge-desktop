@@ -25,7 +25,7 @@ public final class Repository {
     }
 
     public record Tx(long id, String network, String hash, String from, String to, String amount, String asset,
-                     String fee, String status, String error, String created, String direction) {
+                     String fee, String status, String error, String created, String direction, String tokenSymbol) {
     }
 
     public record Network(long id, String name, String family, String key, String chainId, String rpc, String explorer,
@@ -173,15 +173,38 @@ public final class Repository {
 
     public static List<Tx> transactions() throws SQLException {
         var out = new ArrayList<Tx>();
-        try (var c = Database.connect(); var s = c.createStatement(); var r = s.executeQuery("SELECT * FROM transactions ORDER BY created_at DESC, id DESC")) {
+        try (var c = Database.connect(); var s = c.createStatement(); var r = s.executeQuery("SELECT * FROM transactions WHERE status <> 'PLANNED' ORDER BY created_at DESC, id DESC")) {
             while (r.next()) out.add(txFrom(r));
         }
         return out;
     }
 
+    public static void recordIncomingSync(java.util.Set<String> networks) throws SQLException {
+        if (networks.isEmpty()) return;
+        try (var c = Database.connect(); var p = c.prepareStatement("""
+                INSERT INTO incoming_sync_history(network_key,succeeded_at) VALUES(?,CURRENT_TIMESTAMP)
+                ON CONFLICT(network_key) DO UPDATE SET succeeded_at=excluded.succeeded_at
+                """)) {
+            for (String network : networks) {
+                p.setString(1, network);
+                p.addBatch();
+            }
+            p.executeBatch();
+        }
+    }
+
+    public static java.util.Map<String, String> incomingSyncHistory() throws SQLException {
+        var history = new java.util.HashMap<String, String>();
+        try (var c = Database.connect(); var s = c.createStatement();
+             var r = s.executeQuery("SELECT network_key,succeeded_at FROM incoming_sync_history")) {
+            while (r.next()) history.put(r.getString(1), r.getString(2));
+        }
+        return history;
+    }
+
     private static Tx txFrom(java.sql.ResultSet r) throws SQLException {
         String dir = r.getString("direction");
-        return new Tx(r.getLong("id"), r.getString("network_key"), r.getString("tx_hash"), r.getString("from_address"), r.getString("to_address"), r.getString("amount"), r.getString("asset"), r.getString("fee"), r.getString("status"), r.getString("error"), r.getString("created_at"), dir == null || dir.isBlank() ? "OUT" : dir);
+        return new Tx(r.getLong("id"), r.getString("network_key"), r.getString("tx_hash"), r.getString("from_address"), r.getString("to_address"), r.getString("amount"), r.getString("asset"), r.getString("fee"), r.getString("status"), r.getString("error"), r.getString("created_at"), dir == null || dir.isBlank() ? "OUT" : dir, r.getString("token_symbol"));
     }
 
     /** Transfers sent by one simulation batch, in execution order. */
@@ -197,6 +220,51 @@ public final class Repository {
     }
 
     public record SimJob(long id, String network, String status, int recipients, String config, String created) {
+    }
+
+    public record SimulationTemplate(String name, String network, String asset, long groupId, String minAmount,
+                                     String maxAmount, String minDelay, String minUnit, String maxDelay, String maxUnit) {
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    public static List<SimulationTemplate> simulationTemplates() throws SQLException {
+        var templates = new ArrayList<SimulationTemplate>();
+        try (var c = Database.connect(); var s = c.createStatement();
+             var r = s.executeQuery("SELECT * FROM simulation_templates ORDER BY name")) {
+            while (r.next()) templates.add(new SimulationTemplate(r.getString("name"), r.getString("network_key"),
+                    r.getString("asset"), r.getLong("group_id"), r.getString("min_amount"), r.getString("max_amount"),
+                    r.getString("min_delay"), r.getString("min_unit"), r.getString("max_delay"), r.getString("max_unit")));
+        }
+        return templates;
+    }
+
+    public static void saveSimulationTemplate(SimulationTemplate t) throws SQLException {
+        try (var c = Database.connect(); var p = c.prepareStatement("""
+                INSERT INTO simulation_templates(name,network_key,asset,group_id,min_amount,max_amount,min_delay,min_unit,max_delay,max_unit)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+                """)) {
+            p.setString(1, t.name());
+            p.setString(2, t.network());
+            p.setString(3, t.asset());
+            p.setLong(4, t.groupId());
+            p.setString(5, t.minAmount());
+            p.setString(6, t.maxAmount());
+            p.setString(7, t.minDelay());
+            p.setString(8, t.minUnit());
+            p.setString(9, t.maxDelay());
+            p.setString(10, t.maxUnit());
+            p.executeUpdate();
+        }
+    }
+
+    public static void deleteSimulationTemplate(String name) throws SQLException {
+        try (var c = Database.connect(); var p = c.prepareStatement("DELETE FROM simulation_templates WHERE name=?")) {
+            p.setString(1, name);
+            p.executeUpdate();
+        }
     }
 
     public static List<SimJob> simulationJobs() throws SQLException {
@@ -245,9 +313,17 @@ public final class Repository {
         return out;
     }
 
-    /** Stores a received transfer. Returns true if it was new (duplicates are ignored). */
-    public static boolean addIncomingTx(String network, String hash, String from, String to, String amount, String asset, String fee, String status, String timestamp) throws SQLException {
-        String sql = "INSERT OR IGNORE INTO transactions(network_key,tx_hash,from_address,to_address,amount,asset,fee,status,direction,created_at) VALUES(?,?,?,?,?,?,?,?,'IN',COALESCE(?,CURRENT_TIMESTAMP))";
+    /** Stores a received transfer or fills its missing token symbol. Returns true when a row changes. */
+    public static boolean addIncomingTx(String network, String hash, String from, String to, String amount, String asset, String fee, String status, String timestamp, String tokenSymbol) throws SQLException {
+        String sql = """
+                INSERT OR IGNORE INTO transactions(network_key,tx_hash,from_address,to_address,amount,asset,fee,status,direction,created_at,token_symbol)
+                SELECT ?1,?2,?3,?4,?5,?6,?7,?8,'IN',COALESCE(?9,CURRENT_TIMESTAMP),?10
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM transactions
+                    WHERE direction='IN' AND network_key=?1 AND tx_hash=?2 AND to_address=?4
+                      AND ?6 LIKE 'ERC20:%' AND asset=?6 COLLATE NOCASE
+                )
+                """;
         try (var c = Database.connect(); var p = c.prepareStatement(sql)) {
             p.setString(1, network);
             p.setString(2, hash);
@@ -258,7 +334,23 @@ public final class Repository {
             p.setString(7, fee);
             p.setString(8, status);
             p.setString(9, timestamp);
-            return p.executeUpdate() > 0;
+            p.setString(10, tokenSymbol);
+            if (p.executeUpdate() > 0) return true;
+            if (tokenSymbol != null) {
+                try (var update = c.prepareStatement("""
+                        UPDATE transactions SET token_symbol=?
+                        WHERE direction='IN' AND network_key=? AND tx_hash=? AND to_address=? AND asset=? COLLATE NOCASE
+                          AND token_symbol IS NULL
+                        """)) {
+                    update.setString(1, tokenSymbol);
+                    update.setString(2, network);
+                    update.setString(3, hash);
+                    update.setString(4, to);
+                    update.setString(5, asset);
+                    return update.executeUpdate() > 0;
+                }
+            }
+            return false;
         }
     }
 
@@ -340,15 +432,90 @@ public final class Repository {
         }
     }
 
-    public static long createSimulationJob(String network, int recipientCount, String config) throws SQLException {
-        try (var c = Database.connect(); var p = c.prepareStatement("INSERT INTO simulation_jobs(network_key,status,recipient_count,config_json) VALUES(?,'RUNNING',?,?)", Statement.RETURN_GENERATED_KEYS)) {
-            p.setString(1, network);
-            p.setInt(2, recipientCount);
-            p.setString(3, config);
-            p.executeUpdate();
-            try (var k = p.getGeneratedKeys()) {
-                return k.next() ? k.getLong(1) : -1;
+    public record PlannedTransfer(String address, java.math.BigDecimal amount, Long retryOf) {
+    }
+
+    public static long createSimulationJob(String network, String sender, String asset,
+                                           List<PlannedTransfer> plan, String config) throws SQLException {
+        try (var c = Database.connect()) {
+            c.setAutoCommit(false);
+            try (var job = c.prepareStatement("INSERT INTO simulation_jobs(network_key,status,recipient_count,config_json) VALUES(?,'RUNNING',?,?) RETURNING id")) {
+                job.setString(1, network);
+                job.setInt(2, plan.size());
+                job.setString(3, config);
+                long id;
+                try (var keys = job.executeQuery()) {
+                    if (!keys.next()) throw new SQLException("Could not save simulation.");
+                    id = keys.getLong(1);
+                }
+                try (var row = c.prepareStatement("""
+                        INSERT INTO transactions(network_key,from_address,to_address,amount,asset,status,job_id,retry_of)
+                        SELECT ?1,?2,?3,?4,?5,'PLANNED',?6,?7
+                        WHERE ?7 IS NULL OR EXISTS (
+                            SELECT 1 FROM transactions old
+                            WHERE old.id=?7 AND old.network_key=?1 AND old.from_address=?2 AND old.to_address=?3
+                              AND old.amount=?4 AND old.asset=?5
+                              AND (old.status='PLANNED' OR (old.status='FAILED' AND old.tx_hash IS NOT NULL AND old.tx_hash<>''))
+                        )
+                        """)) {
+                    for (PlannedTransfer transfer : plan) {
+                        row.setString(1, network);
+                        row.setString(2, sender);
+                        row.setString(3, transfer.address());
+                        row.setString(4, transfer.amount().toPlainString());
+                        row.setString(5, asset);
+                        row.setLong(6, id);
+                        row.setObject(7, transfer.retryOf());
+                        if (row.executeUpdate() != 1) throw new SQLException("A selected transfer is no longer eligible for retry.");
+                    }
+                }
+                c.commit();
+                return id;
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
             }
+        }
+    }
+
+    public static List<Tx> retryableTransfers(long jobId) throws SQLException {
+        var rows = new ArrayList<Tx>();
+        try (var c = Database.connect(); var p = c.prepareStatement("""
+                SELECT t.* FROM transactions t WHERE t.job_id=?
+                  AND (t.status='PLANNED' OR (t.status='FAILED' AND t.tx_hash IS NOT NULL AND t.tx_hash<>''))
+                  AND NOT EXISTS (SELECT 1 FROM transactions retry WHERE retry.retry_of=t.id)
+                ORDER BY t.id
+                """)) {
+            p.setLong(1, jobId);
+            try (var results = p.executeQuery()) {
+                while (results.next()) rows.add(txFrom(results));
+            }
+        }
+        return rows;
+    }
+
+    public static boolean claimPlannedTransfer(long id) throws SQLException {
+        try (var c = Database.connect(); var p = c.prepareStatement("""
+                UPDATE transactions SET status='SUBMITTING'
+                WHERE id=?1 AND status='PLANNED'
+                  AND NOT EXISTS (SELECT 1 FROM transactions retry WHERE retry.retry_of=?1)
+                """)) {
+            p.setLong(1, id);
+            return p.executeUpdate() == 1;
+        }
+    }
+
+    public static boolean updatePolledTransaction(Tx previous, String status, String fee, String error) throws SQLException {
+        try (var c = Database.connect(); var p = c.prepareStatement("""
+                UPDATE transactions SET status=?,fee=?,error=? WHERE id=? AND status=? AND tx_hash=?
+                """)) {
+            p.setString(1, status);
+            p.setString(2, fee);
+            p.setString(3, error);
+            p.setLong(4, previous.id());
+            p.setString(5, previous.status());
+            p.setString(6, previous.hash());
+            return p.executeUpdate() == 1;
         }
     }
 

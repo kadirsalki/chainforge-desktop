@@ -31,7 +31,10 @@ public interface ChainAdapter {
      * @param asset     {@link #NATIVE} for the network's own coin, otherwise ERC20:&lt;contract&gt;
      * @param timestamp UTC "yyyy-MM-dd HH:mm:ss" (same format SQLite CURRENT_TIMESTAMP uses) or null
      */
-    record IncomingTx(String hash, String from, String to, String amount, String asset, String status, String fee, String timestamp) {
+    record IncomingTx(String hash, String from, String to, String amount, String asset, String status, String fee, String timestamp, String tokenSymbol) {
+        public IncomingTx(String hash, String from, String to, String amount, String asset, String status, String fee, String timestamp) {
+            this(hash, from, to, amount, asset, status, fee, timestamp, null);
+        }
     }
 
     String NATIVE = "NATIVE";

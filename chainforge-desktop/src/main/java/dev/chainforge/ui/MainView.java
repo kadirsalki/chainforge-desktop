@@ -2,10 +2,13 @@ package dev.chainforge.ui;
 
 import dev.chainforge.bitcoin.BitcoinKeys;
 import dev.chainforge.core.AdapterFactory;
+import dev.chainforge.bitcoin.BitcoinAdapter;
 import dev.chainforge.core.ChainAdapter;
 import dev.chainforge.core.SimulationLock;
 import dev.chainforge.data.Repository;
 import dev.chainforge.evm.EvmAdapter;
+import dev.chainforge.solana.SolanaAdapter;
+import dev.chainforge.xrp.XrpAdapter;
 import dev.chainforge.security.WalletVault;
 import dev.chainforge.solana.SolanaKeys;
 import dev.chainforge.xrp.XrpKeys;
@@ -17,7 +20,6 @@ import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
-import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
 import javafx.util.Duration;
 import org.web3j.crypto.Credentials;
@@ -43,7 +45,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class MainView {
     private final BorderPane root = new BorderPane();
-    private Label pageTitle;
+    private static final String LIGHT_STYLES = MainView.class.getResource("/theme-light.css").toExternalForm();
+    private final Appearance appearance = new Appearance(this::applyLightTheme);
+    private final Map<String, Button> navigation = new LinkedHashMap<>();
     private String currentPage = "Overview";
     private final Map<Long, String> unlockedKeys = new HashMap<>();
     private volatile boolean stopRequested = false;
@@ -83,7 +87,9 @@ public final class MainView {
     private ProgressBar simSideBar;
     private Timeline simStatusTimer;
 
-    /** Sidebar badge: visible while a simulation runs (and after it finished until the Simulations page is opened). */
+    /**
+     * Sidebar badge: visible while a simulation runs (and after it finished until the Simulations page is opened).
+     */
     private void updateSimSidebar() {
         if (simSideBox == null) return;
         boolean show = sim.running || sim.finishedUnseen;
@@ -94,18 +100,20 @@ public final class MainView {
         String failed = sim.failed > 0 ? " · " + sim.failed + " failed" : "";
         if (sim.running) {
             simSideTitle.setText("●  SIMULATION RUNNING");
-            simSideTitle.setStyle("-fx-text-fill:#57d6ad;-fx-font-size:10px;-fx-font-weight:bold;");
+            simSideTitle.getStyleClass().setAll("label", "sim-side-title", "text-success");
             simSideDetail.setText(sim.done + " / " + sim.total + " sent · " + pct + "%" + failed);
             simSideBar.setProgress(sim.total == 0 ? ProgressBar.INDETERMINATE_PROGRESS : (double) sim.done / sim.total);
         } else {
             simSideTitle.setText(sim.failed > 0 ? "!  SIMULATION FINISHED" : "✓  SIMULATION FINISHED");
-            simSideTitle.setStyle("-fx-text-fill:" + (sim.failed > 0 ? "#f4cb76" : "#57d6ad") + ";-fx-font-size:10px;-fx-font-weight:bold;");
+            simSideTitle.getStyleClass().setAll("label", "sim-side-title", sim.failed > 0 ? "text-warning" : "text-success");
             simSideDetail.setText(sim.done + " / " + sim.total + " sent" + failed);
             simSideBar.setProgress(1);
         }
     }
 
-    /** Pushes {@link #sim} into the widgets currently shown (no-op until the Simulations page has been built). Call on the FX thread. */
+    /**
+     * Pushes {@link #sim} into the widgets currently shown (no-op until the Simulations page has been built). Call on the FX thread.
+     */
     private void applySimState() {
         updateSimSidebar();
         if (simProgress == null) return;
@@ -118,16 +126,18 @@ public final class MainView {
         simActivity.getChildren().clear();
         if (sim.lines.isEmpty()) simActivity.getChildren().add(muted("Every transfer result will be listed here."));
         else for (String l : sim.lines) simActivity.getChildren().add(muted(l));
-        simStart.setDisable(sim.running);
+        simStart.setDisable(sim.running || simulationLock.isRunning());
         simStop.setDisable(!sim.running);
         if (simSummaryReload != null) simSummaryReload.run();
     }
+
     private final SimulationLock simulationLock = new SimulationLock();
     private final AdapterFactory adapters = new AdapterFactory();
     private Label statusLabel;
     private Timeline transactionPolling;
     private final AtomicBoolean txPollInFlight = new AtomicBoolean(false);
     private VBox transactionList;
+    private boolean txTableView;
     private String txFilter = "ALL"; // ALL | IN | OUT
     // Transactions page search / filters (kept while you move between pages). null = no restriction.
     private String txSearch = "";
@@ -141,6 +151,7 @@ public final class MainView {
 
     public Parent build() {
         root.getStyleClass().add("app");
+        appearance.apply();
         root.setLeft(sidebar());
         root.setTop(topbar());
         showPage("Overview");
@@ -170,7 +181,7 @@ public final class MainView {
             Button b = new Button(icon(x) + "   " + x);
             b.getStyleClass().add("nav");
             b.setMaxWidth(Double.MAX_VALUE);
-            if (x.equals(currentPage)) b.getStyleClass().add("active");
+            navigation.put(x, b);
             b.setOnAction(e -> showPage(x));
             nav.getChildren().add(b);
         }
@@ -184,18 +195,18 @@ public final class MainView {
         simSideBar.getStyleClass().add("monitor-progress");
         simSideBox.getChildren().addAll(simSideTitle, simSideDetail, simSideBar);
         simSideBox.setCursor(javafx.scene.Cursor.HAND);
+        simSideBox.setFocusTraversable(true);
+        simSideBox.setAccessibleRole(javafx.scene.AccessibleRole.BUTTON);
+        simSideBox.setAccessibleText("Open simulation monitor");
         simSideBox.setOnMouseClicked(e -> showPage("Simulations"));
+        simSideBox.setOnKeyPressed(e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.ENTER || e.getCode() == javafx.scene.input.KeyCode.SPACE) {
+                showPage("Simulations");
+                e.consume();
+            }
+        });
         updateSimSidebar();
-        Region gap = new Region();
-        VBox.setVgrow(gap, Priority.ALWAYS);
-        VBox net = new VBox(7);
-        net.getStyleClass().add("network");
-        Label a = new Label("●  TEST NETWORKS");
-        a.setTextFill(Color.web("#57d6ad"));
-        Label id = new Label("EVM · Solana · Bitcoin · XRP");
-        id.getStyleClass().add("muted");
-        net.getChildren().addAll(a, id);
-        s.getChildren().addAll(brand, new Separator(), cap, nav, simSideBox, gap, net);
+        s.getChildren().addAll(brand, new Separator(), cap, nav, simSideBox);
         return s;
     }
 
@@ -216,12 +227,8 @@ public final class MainView {
         h.getStyleClass().add("topbar");
         h.setPadding(new Insets(17, 28, 17, 28));
         h.setAlignment(Pos.CENTER_LEFT);
-        pageTitle = new Label("Overview");
-        pageTitle.getStyleClass().add("page-title");
         Region r = new Region();
         HBox.setHgrow(r, Priority.ALWAYS);
-        Label local = new Label("● LOCAL SQLITE");
-        local.getStyleClass().add("pill");
         Button lock = new Button("⌑  Clear unlocked keys");
         lock.getStyleClass().add("secondary");
         lock.setOnAction(e -> {
@@ -230,7 +237,7 @@ public final class MainView {
         });
         statusLabel = new Label("Ready");
         statusLabel.getStyleClass().add("muted");
-        h.getChildren().addAll(pageTitle, r, statusLabel, local, lock);
+        h.getChildren().addAll(statusLabel, r, lock);
         return h;
     }
 
@@ -250,8 +257,11 @@ public final class MainView {
         }
         if ("Simulations".equals(p)) sim.finishedUnseen = false;
         currentPage = p;
-        pageTitle.setText(p);
-        root.setLeft(sidebar());
+        navigation.forEach((page, button) -> {
+            button.getStyleClass().remove("active");
+            if (page.equals(p)) button.getStyleClass().add("active");
+        });
+        updateSimSidebar();
         Parent content = switch (p) {
             case "Overview" -> dashboard();
             case "Wallets" -> walletsPage();
@@ -275,6 +285,7 @@ public final class MainView {
         Label h = new Label(title);
         h.getStyleClass().add("hero");
         Label d = new Label(subtitle);
+        d.setWrapText(true);
         d.getStyleClass().add("muted");
         v.getChildren().addAll(h, d);
         return v;
@@ -285,6 +296,29 @@ public final class MainView {
         b.getStyleClass().add("panel");
         b.setPadding(new Insets(18));
         return b;
+    }
+
+    private static GridPane alignedCardRows(List<? extends Region> cards, double cardWidth, double gap) {
+        GridPane grid = new GridPane();
+        grid.setHgap(gap);
+        grid.setVgap(gap);
+        grid.setMinWidth(0);
+        for (Region card : cards) card.setMaxHeight(Double.MAX_VALUE);
+        int[] previousColumns = {0};
+        Runnable arrange = () -> {
+            int columns = Math.max(1, (int) ((grid.getWidth() + gap) / (cardWidth + gap)));
+            if (previousColumns[0] == columns) return;
+            previousColumns[0] = columns;
+            grid.getChildren().clear();
+            for (int index = 0; index < cards.size(); index++) {
+                Region card = cards.get(index);
+                GridPane.setFillHeight(card, true);
+                grid.add(card, index % columns, index / columns);
+            }
+        };
+        grid.widthProperty().addListener((observable, previous, width) -> arrange.run());
+        arrange.run();
+        return grid;
     }
 
     private Label section(String s) {
@@ -310,9 +344,15 @@ public final class MainView {
         if (statusLabel != null) statusLabel.setText(s);
     }
 
+    private void applyLightTheme(boolean light) {
+        if (light && !root.getStylesheets().contains(LIGHT_STYLES)) root.getStylesheets().add(LIGHT_STYLES);
+        if (!light) root.getStylesheets().remove(LIGHT_STYLES);
+    }
+
     private void styleDialog(Dialog<?> d) {
         String css = getClass().getResource("/styles.css").toExternalForm();
         if (!d.getDialogPane().getStylesheets().contains(css)) d.getDialogPane().getStylesheets().add(css);
+        if (appearance.isLight()) d.getDialogPane().getStylesheets().add(LIGHT_STYLES);
         d.getDialogPane().getStyleClass().add("app-dialog");
     }
 
@@ -365,7 +405,8 @@ public final class MainView {
             }
         } catch (Exception ignored) {
         }
-        HBox stats = new HBox(12);
+        TilePane stats = new TilePane(12, 12);
+        stats.setPrefColumns(6);
         stats.getChildren().addAll(stat("WALLETS", count("wallets")), stat("ACTIVE NETWORKS", activeNetworks()), stat("RECIPIENTS", String.valueOf(recipients)), stat("CONFIRMED", String.valueOf(confirmed)), stat("PENDING", String.valueOf(pending)), stat("FAILED", String.valueOf(failed)));
         VBox monitor = panel();
         HBox heading = new HBox(10);
@@ -422,7 +463,6 @@ public final class MainView {
         Label n = new Label(value);
         n.getStyleClass().add("stat-value");
         b.getChildren().addAll(l, n);
-        HBox.setHgrow(b, Priority.ALWAYS);
         return b;
     }
 
@@ -452,8 +492,26 @@ public final class MainView {
 
     private VBox walletsPage() {
         VBox v = pageShell("Wallet portfolio", "Network-aware wallet balances and tracked assets. Add verified token contracts once; they will be available in your simulations.");
-        FlowPane actions = new FlowPane(8, 8);
-        actions.getChildren().addAll(primary("+ Generate EVM wallet", this::createWallet), primary("+ Generate Solana wallet", this::createSolanaWallet), primary("+ Generate Bitcoin wallet", this::createBitcoinWallet), primary("+ Generate XRP wallet", this::createXrpWallet), primary("Import EVM key", this::importWallet), primary("Import Solana key", this::importSolanaWallet), primary("Import Bitcoin key", this::importBitcoinWallet), primary("Import XRP seed", this::importXrpWallet), primary("+ Add EVM token", this::addTrackedToken), primary("↻ Refresh", () -> showPage("Wallets")));
+        MenuButton create = new MenuButton("Create wallet", null,
+                walletMenuItem("EVM", this::createWallet),
+                walletMenuItem("Solana", this::createSolanaWallet),
+                walletMenuItem("Bitcoin", this::createBitcoinWallet),
+                walletMenuItem("XRP", this::createXrpWallet));
+        create.getStyleClass().addAll("wallet-menu", "primary");
+        MenuButton importKey = new MenuButton("Import wallet", null,
+                walletMenuItem("EVM private key", this::importWallet),
+                walletMenuItem("Solana private key", this::importSolanaWallet),
+                walletMenuItem("Bitcoin private key", this::importBitcoinWallet),
+                walletMenuItem("XRP seed", this::importXrpWallet));
+        importKey.getStyleClass().addAll("wallet-menu", "secondary");
+        Button addToken = new Button("Add EVM token");
+        addToken.getStyleClass().add("secondary");
+        addToken.setOnAction(e -> addTrackedToken());
+        Button refreshPortfolio = new Button("↻ Refresh portfolio");
+        refreshPortfolio.getStyleClass().add("secondary");
+        refreshPortfolio.setOnAction(e -> showPage("Wallets"));
+        FlowPane actions = new FlowPane(8, 8, create, importKey, addToken, refreshPortfolio);
+        actions.setAlignment(Pos.CENTER_LEFT);
         VBox cards = new VBox(14);
         try {
             var rows = Repository.wallets();
@@ -475,8 +533,7 @@ public final class MainView {
                 Region push = new Region();
                 HBox.setHgrow(push, Priority.ALWAYS);
                 Label badge = new Label(anyMainnet ? "MAINNET" : "TESTNET");
-                badge.getStyleClass().add("status-pill");
-                if (anyMainnet) badge.setStyle("-fx-background-color:#173b35;-fx-text-fill:#61dfb7;");
+                badge.getStyleClass().add(anyMainnet ? "tx-status-pending" : "status-pill");
                 head.getChildren().addAll(identity, push, badge);
                 GridPane balances = new GridPane();
                 balances.setHgap(12);
@@ -491,6 +548,7 @@ public final class MainView {
                 List<Runnable> loaders = new ArrayList<>();
                 VBox nativeCard = new VBox(5);
                 nativeCard.getStyleClass().add("balance-tile");
+                nativeCard.setMaxHeight(Double.MAX_VALUE);
                 nativeCard.getChildren().add(muted("NATIVE BALANCE"));
                 if (nets.isEmpty()) nativeCard.getChildren().add(muted("Enable a matching network in Networks"));
                 for (var net : nets) {
@@ -511,6 +569,7 @@ public final class MainView {
                 balances.add(nativeCard, 0, 0);
                 VBox tokenCard = new VBox(5);
                 tokenCard.getStyleClass().add("balance-tile");
+                tokenCard.setMaxHeight(Double.MAX_VALUE);
                 tokenCard.getChildren().add(muted("TRACKED TOKENS"));
                 if ("BITCOIN".equalsIgnoreCase(w.family())) {
                     tokenCard.getChildren().add(muted("Native BTC only · no token catalogue"));
@@ -546,7 +605,6 @@ public final class MainView {
                 }
                 balances.add(tokenCard, 1, 0);
                 loaders.forEach(Runnable::run);
-                HBox controls = new HBox(8);
                 Button refreshBalance = new Button("↻ Refresh balance");
                 refreshBalance.getStyleClass().add("secondary");
                 refreshBalance.setOnAction(e -> {
@@ -564,8 +622,8 @@ public final class MainView {
                     javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
                     notifyStatus("Address copied.");
                 });
-                Button del = new Button("Delete");
-                del.getStyleClass().add("secondary");
+                Button del = new Button("Delete wallet");
+                del.getStyleClass().addAll("secondary", "wallet-delete");
                 del.setOnAction(e -> {
                     if (confirm("Delete wallet?", "Encrypted key data will be removed from this local database.")) {
                         try {
@@ -577,7 +635,11 @@ public final class MainView {
                         }
                     }
                 });
-                controls.getChildren().addAll(unlock, copy, refreshBalance, del);
+                FlowPane walletActions = new FlowPane(8, 8, unlock, copy, refreshBalance);
+                walletActions.setAlignment(Pos.CENTER_LEFT);
+                HBox.setHgrow(walletActions, Priority.ALWAYS);
+                HBox controls = new HBox(12, walletActions, del);
+                controls.setAlignment(Pos.CENTER_RIGHT);
                 card.getChildren().addAll(head, balances, controls);
                 cards.getChildren().add(card);
             }
@@ -586,6 +648,13 @@ public final class MainView {
         }
         v.getChildren().addAll(actions, cards, muted("Portfolio balances show native coin plus tokens in your tracked-token list. Standard RPC cannot enumerate every arbitrary token held by an address; use an indexer or add token contracts to track them."));
         return v;
+    }
+
+    private static MenuItem walletMenuItem(String text, Runnable action) {
+        MenuItem item = new MenuItem(text);
+        item.getStyleClass().add("wallet-menu-item");
+        item.setOnAction(e -> action.run());
+        return item;
     }
 
     private void addTrackedToken() {
@@ -703,13 +772,22 @@ public final class MainView {
         throw new IllegalArgumentException("Unknown network: " + key);
     }
 
-    /** Enabled networks this wallet can operate on (Bitcoin wallets only match their own network by address prefix). */
+    /**
+     * Enabled networks this wallet can operate on (Bitcoin wallets only match their own network by address prefix).
+     */
     private List<Repository.Network> walletNetworks(Repository.Wallet w) {
         try {
             return Repository.networks().stream().filter(x -> x.enabled() && walletMatchesNetwork(w, x)).toList();
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    private List<Repository.Network> incomingHistoryNetworks(Repository.Wallet wallet, List<Repository.Network> networks) {
+        return networks.stream()
+                .filter(network -> network.enabled() || "ethereum-mainnet".equals(network.key()))
+                .filter(network -> walletMatchesNetwork(wallet, network))
+                .toList();
     }
 
     private boolean walletMatchesNetwork(Repository.Wallet w, Repository.Network n) {
@@ -772,7 +850,9 @@ public final class MainView {
         };
     }
 
-    /** Ticker of a network's native coin (AVAX on Avalanche, ETH on Ethereum/Sepolia, ...). */
+    /**
+     * Ticker of a network's native coin (AVAX on Avalanche, ETH on Ethereum/Sepolia, ...).
+     */
     private String nativeAssetFor(Repository.Network n) {
         return n.nativeSymbol() == null || n.nativeSymbol().isBlank() ? nativeAssetFor(n.family()) : n.nativeSymbol();
     }
@@ -821,7 +901,8 @@ public final class MainView {
             var parsed = BitcoinKeys.parseWif(wif);
             String address = BitcoinKeys.address(parsed.key(), parsed.network());
             if (parsed.network() == org.bitcoinj.base.BitcoinNetwork.MAINNET
-                    && !confirm("Mainnet key", "This is a MAINNET key controlling address:\n" + address + "\n\nIt holds real funds. Import it anyway?")) return;
+                    && !confirm("Mainnet key", "This is a MAINNET key controlling address:\n" + address + "\n\nIt holds real funds. Import it anyway?"))
+                return;
             String pass = ask("Encrypt imported wallet", "Set a vault password (minimum 10 characters):", true).orElse("");
             if (pass.length() < 10) {
                 error("Use a vault password with at least 10 characters.");
@@ -930,7 +1011,8 @@ public final class MainView {
             var w = Repository.wallets().stream().filter(x -> x.address().equals(address)).findFirst().orElse(null);
             if (w == null) throw new IllegalArgumentException("Wallet not found.");
             var nets = walletNetworks(w);
-            if (nets.isEmpty()) throw new IllegalArgumentException("No active network for this wallet. Enable one in Networks.");
+            if (nets.isEmpty())
+                throw new IllegalArgumentException("No active network for this wallet. Enable one in Networks.");
             ChainAdapter adapter = adapterFor(nets.get(0));
             String asset = nativeAssetFor(nets.get(0));
             notifyStatus("Checking " + asset + " balance…");
@@ -997,7 +1079,8 @@ public final class MainView {
                 return;
             }
             if (!confirm("Delete group \"" + g.name() + "\"?", "This permanently removes the group and its " + g.count()
-                    + " recipient address(es) from the local address book. Past transactions are not affected.")) return;
+                    + " recipient address(es) from the local address book. Past transactions are not affected."))
+                return;
             try {
                 int removed = Repository.deleteRecipientGroup(g.id());
                 showPage("Recipients");
@@ -1036,9 +1119,12 @@ public final class MainView {
             if (!xrp) tag.clear();
         };
         syncTag.run();
-        FlowPane controls = new FlowPane(10, 10);
-        controls.setPrefWrapLength(880);
-        controls.getChildren().addAll(network, group, newGroup, deleteGroup, label, address, tag, add);
+        FlowPane groupControls = new FlowPane(10, 8, network, group, newGroup, deleteGroup);
+        FlowPane addressControls = new FlowPane(10, 8, label, address, tag, add);
+        groupControls.setAlignment(Pos.CENTER_LEFT);
+        addressControls.setAlignment(Pos.CENTER_LEFT);
+        VBox controls = panel();
+        controls.getChildren().addAll(section("RECIPIENT GROUP"), groupControls, section("ADD AN ADDRESS"), addressControls);
         TextArea bulk = new TextArea();
         bulk.setPromptText("Paste addresses, one per line (optionally \"label,address\"). XRP: \"address,tag\" or \"label,address,tag\". YAML import accepts a list or { recipients: [...] } with optional destination_tag.");
         bulk.setPrefRowCount(5);
@@ -1067,8 +1153,7 @@ public final class MainView {
             }
             var rows = Repository.recipients(network.key(), group.id());
             if (rows.isEmpty()) list.getChildren().add(muted("This group is empty."));
-            FlowPane recipientCards = new FlowPane(10, 10);
-            recipientCards.setPrefWrapLength(850);
+            List<Region> recipientCards = new ArrayList<>();
             for (var r : rows) {
                 VBox row = new VBox(8);
                 row.getStyleClass().add("recipient-card");
@@ -1078,6 +1163,9 @@ public final class MainView {
                 Label address = new Label(recipientDisplay(r.address()));
                 address.getStyleClass().add("network-detail-value");
                 address.setWrapText(true);
+                address.setMaxHeight(Double.MAX_VALUE);
+                address.setAlignment(Pos.TOP_LEFT);
+                VBox.setVgrow(address, Priority.ALWAYS);
                 address.setTooltip(new Tooltip(recipientDisplay(r.address())));
                 Button del = new Button("Remove recipient");
                 del.getStyleClass().add("secondary");
@@ -1090,9 +1178,9 @@ public final class MainView {
                     }
                 });
                 row.getChildren().addAll(title, address, del);
-                recipientCards.getChildren().add(row);
+                recipientCards.add(row);
             }
-            list.getChildren().add(recipientCards);
+            if (!recipientCards.isEmpty()) list.getChildren().add(alignedCardRows(recipientCards, 320, 10));
         } catch (Exception ex) {
             list.getChildren().add(muted(rootMessage(ex)));
         }
@@ -1102,7 +1190,8 @@ public final class MainView {
         if (n == null) throw new IllegalArgumentException("Select a network.");
         if ("EVM".equalsIgnoreCase(n.family())) validateEvmAddress(a);
         else if ("SOLANA".equalsIgnoreCase(n.family())) SolanaKeys.validateAddress(a);
-        else if ("BITCOIN".equalsIgnoreCase(n.family())) BitcoinKeys.validateAddress(a, BitcoinKeys.network(n.testnet()));
+        else if ("BITCOIN".equalsIgnoreCase(n.family()))
+            BitcoinKeys.validateAddress(a, BitcoinKeys.network(n.testnet()));
         else if ("XRP".equalsIgnoreCase(n.family())) XrpKeys.normalizeForNetwork(a, n.testnet());
         else throw new IllegalArgumentException("This network family is not enabled yet.");
     }
@@ -1128,7 +1217,9 @@ public final class MainView {
         return a;
     }
 
-    /** Readable recipient text: XRP X-addresses are shown as "rXXXX · tag N", everything else unchanged. */
+    /**
+     * Readable recipient text: XRP X-addresses are shown as "rXXXX · tag N", everything else unchanged.
+     */
     private String recipientDisplay(String address) {
         return XrpKeys.isXAddress(address) ? XrpKeys.display(address) : address;
     }
@@ -1239,8 +1330,9 @@ public final class MainView {
         long evm = networks.stream().filter(n -> "EVM".equalsIgnoreCase(n.family())).count();
         long sol = networks.stream().filter(n -> "SOLANA".equalsIgnoreCase(n.family())).count();
         long btc = networks.stream().filter(n -> "BITCOIN".equalsIgnoreCase(n.family())).count();
-        HBox summary = new HBox(12, stat("CONFIGURED NETWORKS", String.valueOf(networks.size())),
+        TilePane summary = new TilePane(12, 12, stat("CONFIGURED NETWORKS", String.valueOf(networks.size())),
                 stat("ACTIVE NETWORKS", String.valueOf(enabled)), stat("EVM NETWORKS", String.valueOf(evm)), stat("SOLANA NETWORKS", String.valueOf(sol)), stat("BITCOIN NETWORKS", String.valueOf(btc)), stat("XRP NETWORKS", String.valueOf(networks.stream().filter(n -> "XRP".equalsIgnoreCase(n.family())).count())));
+        summary.setPrefColumns(6);
         VBox configured = new VBox(14);
         HBox heading = new HBox(8);
         heading.setAlignment(Pos.CENTER_LEFT);
@@ -1248,8 +1340,7 @@ public final class MainView {
         configured.getChildren().add(heading);
         if (networks.isEmpty())
             configured.getChildren().add(muted("No networks configured yet. Add an EVM test network below."));
-        FlowPane cards = new FlowPane(14, 14);
-        cards.setPrefWrapLength(900);
+        List<Region> cards = new ArrayList<>();
         for (var n : networks) {
             VBox card = new VBox(12);
             card.getStyleClass().add("network-card");
@@ -1290,6 +1381,7 @@ public final class MainView {
             rpcLabel.getStyleClass().add("network-detail-label");
             details.add(rpcLabel, 0, 2);
             details.add(rpcValue, 1, 2);
+            VBox.setVgrow(details, Priority.ALWAYS);
             Separator sep = new Separator();
             HBox actions = new HBox(8);
             Button toggle = new Button(n.enabled() ? "Disable network" : "Enable network");
@@ -1316,9 +1408,9 @@ public final class MainView {
             });
             actions.getChildren().addAll(toggle, copy);
             card.getChildren().addAll(top, details, sep, actions);
-            cards.getChildren().add(card);
+            cards.add(card);
         }
-        configured.getChildren().add(cards);
+        if (!cards.isEmpty()) configured.getChildren().add(alignedCardRows(cards, 330, 14));
         VBox form = panel();
         form.getChildren().addAll(section("ADD / UPDATE EVM TEST NETWORK"), muted("Connect an EVM-compatible testnet using its HTTPS RPC endpoint."));
         GridPane fields = new GridPane();
@@ -1397,9 +1489,10 @@ public final class MainView {
     }
 
     private VBox transactionsPage() {
-        VBox v = pageShell("Transactions", "Transaction statuses are refreshed from the network every 15 seconds while this screen is open.");
+        VBox v = pageShell("Transactions", "Browse received and sent transfers across your wallets.");
         ToggleGroup filterGroup = new ToggleGroup();
-        HBox filters = new HBox(6);
+        HBox filters = new HBox(4);
+        filters.getStyleClass().add("tx-direction-switch");
         for (String[] f : new String[][]{{"ALL", "All"}, {"IN", "↓ Incoming"}, {"OUT", "↑ Outgoing"}}) {
             ToggleButton b = new ToggleButton(f[1]);
             b.setToggleGroup(filterGroup);
@@ -1412,20 +1505,51 @@ public final class MainView {
             });
             filters.getChildren().add(b);
         }
-        HBox bar = new HBox(10, filters, primary("Refresh", () -> {
+        Button refresh = new Button("Refresh statuses");
+        refresh.getStyleClass().add("secondary");
+        refresh.setOnAction(e -> {
             renderTransactionList(transactionList);
             pollPendingTransactions();
-            syncIncoming(true);
-        }), primary("⇣ Sync incoming", () -> syncIncoming(true)), exportButton());
+        });
+        ToggleGroup viewGroup = new ToggleGroup();
+        HBox viewSwitch = new HBox(4);
+        viewSwitch.getStyleClass().add("tx-direction-switch");
+        for (String view : List.of("Cards", "Table")) {
+            boolean table = "Table".equals(view);
+            ToggleButton button = new ToggleButton(view);
+            button.setToggleGroup(viewGroup);
+            button.getStyleClass().add("filter-toggle");
+            button.setSelected(txTableView == table);
+            button.setOnAction(e -> {
+                if (!button.isSelected()) button.setSelected(true);
+                if (txTableView == table) return;
+                txTableView = table;
+                renderTransactionList(transactionList);
+            });
+            viewSwitch.getChildren().add(button);
+        }
+        Button lookup = new Button("Find by hash");
+        lookup.getStyleClass().add("secondary");
+        lookup.setOnAction(e -> lookupIncomingTransaction());
+        FlowPane toolbar = new FlowPane(8, 8, primary("Sync incoming", () -> syncIncoming(true)), lookup, refresh, exportButton());
+        toolbar.setAlignment(Pos.CENTER_RIGHT);
         Label pollingLabel = muted("● Auto-check active · every 15 seconds");
         pollingLabel.getStyleClass().add("polling-indicator");
         incomingSyncLabel = muted("Incoming: not synced yet");
-        VBox statusLabels = new VBox(2, pollingLabel, incomingSyncLabel);
-        HBox toolbar = new HBox(12, bar, statusLabels);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-        transactionList = panel();
+        Hyperlink details = new Hyperlink("Sync details");
+        details.setOnAction(e -> showIncomingSyncDetails());
+        FlowPane statusLabels = new FlowPane(14, 6, pollingLabel, incomingSyncLabel, details);
+        statusLabels.setAlignment(Pos.CENTER_LEFT);
+        VBox filterPanel = transactionFilterBar(filters);
+        Region historySpacer = new Region();
+        HBox.setHgrow(historySpacer, Priority.ALWAYS);
+        HBox historyHeader = new HBox(12, section("TRANSACTION HISTORY"), historySpacer, viewSwitch);
+        historyHeader.setAlignment(Pos.CENTER_LEFT);
+        VBox historyPanel = panel();
+        transactionList = new VBox(12);
+        historyPanel.getChildren().addAll(historyHeader, transactionList);
         renderTransactionList(transactionList);
-        v.getChildren().addAll(toolbar, transactionFilterBar(), transactionList);
+        v.getChildren().addAll(toolbar, statusLabels, filterPanel, historyPanel);
         if (transactionPolling != null) transactionPolling.stop();
         transactionPolling = new Timeline(new KeyFrame(Duration.seconds(15), e -> pollPendingTransactions()));
         transactionPolling.setCycleCount(Timeline.INDEFINITE);
@@ -1444,19 +1568,22 @@ public final class MainView {
         Map<String, String> symbols = new HashMap<>();
         for (String nk : txs.stream().map(Repository.Tx::network).distinct().toList()) {
             try {
-                for (var tk : Repository.tokens(nk)) symbols.put(nk + "|" + tk.contract().toLowerCase(Locale.ROOT), tk.symbol());
+                for (var tk : Repository.tokens(nk))
+                    symbols.put(nk + "|" + tk.contract().toLowerCase(Locale.ROOT), tk.symbol());
             } catch (Exception ignored) {
             }
         }
         return symbols;
     }
 
-    /** Asset as the user knows it: ETH / AVAX / BTC..., a tracked token's symbol, or "ERC20 · 0x12…ab" for unknown tokens. */
+    /**
+     * Asset as the user knows it: ETH / AVAX / BTC..., a tracked token's symbol, or "ERC20 · 0x12…ab" for unknown tokens.
+     */
     private String txAssetLabel(Repository.Tx t, Map<String, String> tokenSymbols) {
         String asset = safe(t.asset());
         if (!asset.toUpperCase(Locale.ROOT).startsWith("ERC20:")) return asset;
         String contract = asset.substring(asset.indexOf(':') + 1).trim();
-        String sym = tokenSymbols.get(t.network() + "|" + contract.toLowerCase(Locale.ROOT));
+        String sym = tokenSymbols.getOrDefault(t.network() + "|" + contract.toLowerCase(Locale.ROOT), t.tokenSymbol());
         return sym != null ? sym : "ERC20 · " + shortHash(contract);
     }
 
@@ -1487,6 +1614,7 @@ public final class MainView {
                 case "CONFIRMED" -> st.equals("CONFIRMED") || st.equals("SUCCESS");
                 case "PENDING" -> st.equals("PENDING") || st.equals("SUBMITTED");
                 case "FAILED" -> st.equals("FAILED");
+                case "NEEDS_REVIEW" -> st.equals("UNKNOWN") || st.equals("SUBMITTING");
                 default -> true;
             };
             if (!ok) return false;
@@ -1496,7 +1624,7 @@ public final class MainView {
             if (d == null || (txFrom != null && d.isBefore(txFrom)) || (txTo != null && d.isAfter(txTo))) return false;
         }
         if (!txSearch.isBlank()) {
-            String hay = String.join("\n", safe(t.hash()), safe(t.from()), safe(t.to()), recipientDisplay(safe(t.to())), safe(t.amount()), asset,
+            String hay = String.join("\n", safe(t.hash()), safe(t.from()), safe(t.to()), recipientDisplay(safe(t.to())), safe(t.amount()), asset, safe(t.asset()),
                     networkNameOrKey(t.network()), safe(t.error())).toLowerCase(Locale.ROOT);
             for (String word : txSearch.toLowerCase(Locale.ROOT).trim().split("\\s+"))
                 if (!hay.contains(word)) return false; // every word must match somewhere
@@ -1504,11 +1632,13 @@ public final class MainView {
         return true;
     }
 
-    /** Search box + network / asset / status / date-range filters for the Transactions page. */
-    private FlowPane transactionFilterBar() {
+    /**
+     * Search box + network / asset / status / date-range filters for the Transactions page.
+     */
+    private VBox transactionFilterBar(HBox directions) {
         TextField search = new TextField(txSearch);
         search.setPromptText("Search hash, address, amount, asset, error…");
-        search.setPrefWidth(330);
+        search.setPrefWidth(290);
         javafx.animation.PauseTransition debounce = new javafx.animation.PauseTransition(Duration.millis(250));
         debounce.setOnFinished(e -> renderTransactionList(transactionList));
         search.textProperty().addListener((o, a, b) -> {
@@ -1519,7 +1649,7 @@ public final class MainView {
         ComboBox<String> network = new ComboBox<>();
         ComboBox<String> asset = new ComboBox<>();
         ComboBox<String> status = new ComboBox<>();
-        for (ComboBox<String> c : List.of(network, asset, status)) c.setPrefWidth(165);
+        for (ComboBox<String> c : List.of(network, asset, status)) c.setPrefWidth(155);
         network.setCellFactory(lv -> filterCell(v -> "ALL".equals(v) ? "All networks" : networkNameOrKey(v)));
         network.setButtonCell(filterCell(v -> "ALL".equals(v) ? "All networks" : networkNameOrKey(v)));
         asset.setCellFactory(lv -> filterCell(v -> "ALL".equals(v) ? "All assets" : v));
@@ -1528,9 +1658,10 @@ public final class MainView {
             case "CONFIRMED" -> "Confirmed";
             case "PENDING" -> "Pending";
             case "FAILED" -> "Failed";
+            case "NEEDS_REVIEW" -> "Needs review";
             default -> "Any status";
         };
-        status.getItems().addAll("ALL", "CONFIRMED", "PENDING", "FAILED");
+        status.getItems().addAll("ALL", "CONFIRMED", "PENDING", "FAILED", "NEEDS_REVIEW");
         status.setCellFactory(lv -> filterCell(statusText));
         status.setButtonCell(filterCell(statusText));
         status.setValue(txStatusFilter == null ? "ALL" : txStatusFilter);
@@ -1575,8 +1706,8 @@ public final class MainView {
         DatePicker from = new DatePicker(txFrom), to = new DatePicker(txTo);
         from.setPromptText("From date");
         to.setPromptText("To date");
-        from.setPrefWidth(140);
-        to.setPrefWidth(140);
+        from.setPrefWidth(150);
+        to.setPrefWidth(150);
         from.setOnAction(e -> {
             txFrom = from.getValue();
             renderTransactionList(transactionList);
@@ -1586,8 +1717,13 @@ public final class MainView {
             renderTransactionList(transactionList);
         });
 
-        Button clear = new Button("✕ Clear filters");
-        clear.getStyleClass().add("secondary");
+        Button clear = new Button("Reset filters");
+        clear.getStyleClass().addAll("secondary", "tx-filter-reset");
+        clear.setDisable(!hasTransactionFilters());
+        Runnable updateReset = () -> clear.setDisable(!hasTransactionFilters());
+        search.textProperty().addListener((o, a, b) -> updateReset.run());
+        for (Control control : List.of(network, asset, status, from, to))
+            control.addEventHandler(javafx.event.ActionEvent.ACTION, e -> updateReset.run());
         clear.setOnAction(e -> {
             txSearch = "";
             txNetworkFilter = txAssetFilter = txStatusFilter = null;
@@ -1598,11 +1734,23 @@ public final class MainView {
             to.setValue(null);
             txFilterOptionsRefresh.run();
             renderTransactionList(transactionList);
+            updateReset.run();
         });
 
-        FlowPane bar = new FlowPane(10, 10, search, network, asset, status, from, to, clear);
-        bar.setPrefWrapLength(900);
-        return bar;
+        FlowPane searchRow = new FlowPane(10, 8, directions, search, clear);
+        searchRow.setAlignment(Pos.CENTER_LEFT);
+        FlowPane fields = new FlowPane(10, 8,
+                fieldCard("Network", network), fieldCard("Asset", asset), fieldCard("Status", status),
+                fieldCard("From date", from), fieldCard("To date", to));
+        VBox panel = panel();
+        panel.getStyleClass().add("tx-filter-panel");
+        panel.getChildren().addAll(searchRow, fields);
+        return panel;
+    }
+
+    private boolean hasTransactionFilters() {
+        return !txSearch.isBlank() || txNetworkFilter != null || txAssetFilter != null ||
+                txStatusFilter != null || txFrom != null || txTo != null;
     }
 
     private static ListCell<String> filterCell(java.util.function.Function<String, String> text) {
@@ -1623,7 +1771,6 @@ public final class MainView {
     private void renderTransactionList(VBox list) {
         if (list == null) return;
         list.getChildren().clear();
-        list.getChildren().add(section("TRANSACTION HISTORY"));
         try {
             var all = Repository.transactions();
             long inCount = all.stream().filter(t -> "IN".equals(t.direction())).count();
@@ -1640,18 +1787,22 @@ public final class MainView {
                     + pendingCount + " awaiting confirmation  ·  statuses refresh every 15 seconds"));
 
             if (rows.isEmpty()) {
-                list.getChildren().add(muted(filtered ? "No transactions match the current search and filters. Use \"Clear filters\" to see everything." : "IN".equals(txFilter) ? "No incoming transfers found yet. Use \"Sync incoming\" to read them from the network."
+                list.getChildren().add(muted(filtered ? "No transactions match the current search and filters. Use \"Reset filters\" to see everything." : "IN".equals(txFilter) ? "No incoming transfers found yet. Use \"Sync incoming\" to read them from the network."
                         : "OUT".equals(txFilter) ? "No outgoing transactions yet." : "No transactions yet."));
                 return;
             }
 
-            FlowPane cards = new FlowPane(14, 14);
-            cards.setPrefWrapLength(900);
-            cards.setMaxWidth(Double.MAX_VALUE);
-
             if (rows.size() > TX_RENDER_LIMIT)
                 list.getChildren().add(muted("Showing the newest " + TX_RENDER_LIMIT + " of " + rows.size() + " matches — narrow the search or the dates to see the rest."));
-            for (var t : rows.size() > TX_RENDER_LIMIT ? rows.subList(0, TX_RENDER_LIMIT) : rows) {
+            var visibleRows = rows.subList(0, Math.min(rows.size(), TX_RENDER_LIMIT));
+            if (txTableView) {
+                list.getChildren().add(transactionTable(visibleRows, tokenSymbols));
+                return;
+            }
+
+            List<Region> cards = new ArrayList<>();
+
+            for (var t : visibleRows) {
                 VBox card = new VBox(12);
                 card.getStyleClass().add("transaction-card");
                 card.setPrefWidth(350);
@@ -1676,7 +1827,7 @@ public final class MainView {
                 HBox.setHgrow(spacer, Priority.ALWAYS);
                 String asset = safe(t.asset());
                 boolean erc20 = asset.toUpperCase(Locale.ROOT).startsWith("ERC20:");
-                String tokenSymbol = erc20 ? tokenSymbols.get(t.network() + "|" + asset.substring(asset.indexOf(':') + 1).trim().toLowerCase(Locale.ROOT)) : null;
+                String tokenSymbol = erc20 ? tokenSymbols.getOrDefault(t.network() + "|" + asset.substring(asset.indexOf(':') + 1).trim().toLowerCase(Locale.ROOT), t.tokenSymbol()) : null;
                 String amountAsset = erc20 ? (tokenSymbol != null ? tokenSymbol : "ERC20") : asset;
                 Label amount = new Label((incoming ? "+" : "") + safe(t.amount()) + " " + amountAsset);
                 amount.getStyleClass().add(incoming ? "transaction-amount-in" : "transaction-amount");
@@ -1717,12 +1868,103 @@ public final class MainView {
                     link.setOnAction(e -> getHostServicesOpen(explorer));
                     card.getChildren().add(link);
                 }
-                cards.getChildren().add(card);
+                cards.add(card);
             }
-            list.getChildren().add(cards);
+            list.getChildren().add(alignedCardRows(cards, 350, 14));
         } catch (Exception e) {
             list.getChildren().add(muted("Could not load transactions: " + rootMessage(e)));
         }
+    }
+
+    private TableView<Repository.Tx> transactionTable(List<Repository.Tx> rows, Map<String, String> tokenSymbols) {
+        TableView<Repository.Tx> table = new TableView<>();
+        table.getStyleClass().add("transaction-table");
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        table.setFixedCellSize(42);
+        table.setPrefHeight(34 + 42 * Math.min(rows.size(), 12));
+        Map<String, String> networkNames = new HashMap<>();
+        for (var row : rows) networkNames.computeIfAbsent(row.network(), this::networkNameOrKey);
+
+        table.getColumns().addAll(List.of(
+                transactionBadgeColumn("Direction", 86, Repository.Tx::direction,
+                        value -> "IN".equals(value) ? "↓ IN" : "↑ OUT",
+                        value -> "IN".equals(value) ? "tx-dir-in" : "tx-dir-out"),
+                transactionColumn("Network", 130, t -> networkNames.get(t.network())),
+                transactionColumn("Amount", 120, t -> safe(t.amount()) + " " + txAssetLabel(t, tokenSymbols)),
+                transactionBadgeColumn("Status", 100, t -> safe(t.status()),
+                        value -> value.toUpperCase(Locale.ROOT), this::statusStyle),
+                transactionColumn("From", 105, t -> safe(t.from())),
+                transactionColumn("To", 105, t -> recipientDisplay(safe(t.to()))),
+                transactionColumn("Created (UTC)", 145, t -> safe(t.created()))
+        ));
+
+        TableColumn<Repository.Tx, Repository.Tx> hash = new TableColumn<>("Transaction hash");
+        hash.setPrefWidth(130);
+        hash.setSortable(false);
+        hash.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyObjectWrapper<>(cell.getValue()));
+        hash.setCellFactory(column -> new TableCell<>() {
+            private final Hyperlink link = new Hyperlink();
+            private final Tooltip tooltip = new Tooltip();
+
+            @Override
+            protected void updateItem(Repository.Tx tx, boolean empty) {
+                super.updateItem(tx, empty);
+                setGraphic(null);
+                link.setOnAction(null);
+                if (empty || tx == null || tx.hash() == null || tx.hash().isBlank()) return;
+                String value = tx.hash();
+                link.setText(shortHash(value));
+                tooltip.setText(value);
+                link.setTooltip(tooltip);
+                link.setOnAction(e -> getHostServicesOpen(explorerTxUrl(tx.network(), value)));
+                setGraphic(link);
+            }
+        });
+        table.getColumns().add(hash);
+        table.getItems().setAll(rows);
+        return table;
+    }
+
+    private static TableColumn<Repository.Tx, String> transactionBadgeColumn(
+            String title, int width, java.util.function.Function<Repository.Tx, String> value,
+            java.util.function.Function<String, String> text, java.util.function.Function<String, String> style) {
+        TableColumn<Repository.Tx, String> column = transactionColumn(title, width, value);
+        column.setCellFactory(c -> new TableCell<>() {
+            private final Label badge = new Label();
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setGraphic(null);
+                    return;
+                }
+                badge.setText(text.apply(item));
+                badge.getStyleClass().setAll("label", style.apply(item));
+                setGraphic(badge);
+            }
+        });
+        return column;
+    }
+
+    private static TableColumn<Repository.Tx, String> transactionColumn(String title, int width,
+                                                                        java.util.function.Function<Repository.Tx, String> value) {
+        TableColumn<Repository.Tx, String> column = new TableColumn<>(title);
+        column.setPrefWidth(width);
+        column.setSortable(false);
+        column.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(value.apply(cell.getValue())));
+        column.setCellFactory(c -> new TableCell<>() {
+            private final Tooltip tooltip = new Tooltip();
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? null : item);
+                tooltip.setText(item);
+                setTooltip(empty || item == null || item.isBlank() ? null : tooltip);
+            }
+        });
+        return column;
     }
 
     /**
@@ -1770,7 +2012,7 @@ public final class MainView {
         return switch (s) {
             case "CONFIRMED", "SUCCESS" -> "tx-status-success";
             case "FAILED" -> "tx-status-failed";
-            case "PENDING", "SUBMITTED" -> "tx-status-pending";
+            case "PENDING", "SUBMITTED", "UNKNOWN", "SUBMITTING" -> "tx-status-pending";
             default -> "status-pill";
         };
     }
@@ -1779,7 +2021,9 @@ public final class MainView {
         pollPendingTransactions(false);
     }
 
-    /** @param anyPage also run while another page (the Simulations summary) needs fresh statuses */
+    /**
+     * @param anyPage also run while another page (the Simulations summary) needs fresh statuses
+     */
     private void pollPendingTransactions(boolean anyPage) {
         if ((!anyPage && !"Transactions".equals(currentPage)) || !txPollInFlight.compareAndSet(false, true)) return;
         CompletableFuture.runAsync(() -> {
@@ -1801,9 +2045,9 @@ public final class MainView {
                     try {
                         ChainAdapter.StatusResult result = adapter.checkTransactionStatus(tx.hash()).join();
                         String next = safe(result.status()).toUpperCase(Locale.ROOT);
-                        if (!next.equals(current) || !Objects.equals(result.fee(), tx.fee()) || !Objects.equals(result.error(), tx.error())) {
-                            Repository.updateTx(tx.id(), tx.hash(), result.fee() != null ? result.fee() : tx.fee(), next, result.error());
-                            changed = true;
+                        String fee = result.fee() != null ? result.fee() : tx.fee();
+                        if (!next.equals(current) || !Objects.equals(fee, tx.fee()) || !Objects.equals(result.error(), tx.error())) {
+                            changed |= Repository.updatePolledTransaction(tx, next, fee, result.error());
                         }
                     } catch (Exception ignored) {/* transient RPC failure: keep the last known status */}
                 }
@@ -1830,39 +2074,65 @@ public final class MainView {
         if (manual) notifyStatus("Syncing incoming transfers…");
         if (incomingSyncLabel != null) incomingSyncLabel.setText("Incoming: syncing…");
         CompletableFuture.runAsync(() -> {
-            int added = 0, checked = 0;
+            int changed = 0, checked = 0;
+            boolean scanComplete = false;
             List<String> problems = new ArrayList<>();
+            Set<String> successfulNetworks = new HashSet<>(), failedNetworks = new HashSet<>();
             try {
+                var networks = Repository.networks();
                 for (var w : Repository.wallets()) {
-                    for (var net : walletNetworks(w)) {
+                    for (var net : incomingHistoryNetworks(w, networks)) {
                         if (!AdapterFactory.isSupported(net)) continue;
                         checked++;
+                        int previousErrors = problems.size();
                         try {
                             var known = Repository.knownIncomingHashes(net.key(), w.address());
-                            for (var t : adapterFor(net).fetchIncoming(w.address(), known).join()) {
-                                if (t.from() != null && t.from().equalsIgnoreCase(w.address())) continue; // sent to itself
+                            ChainAdapter adapter = adapterFor(net);
+                            var incoming = adapter instanceof EvmAdapter evm
+                                    ? evm.fetchIncoming(w.address(), Repository.tokens(net.key()).stream()
+                                    .map(t -> new EvmAdapter.TokenInfo(t.contract(), t.symbol(), t.decimals(), t.name()))
+                                    .toList(), ex -> problems.add(w.name() + " · " + net.name() + ": " + ex.getMessage()))
+                                    : adapter.fetchIncoming(w.address(), known);
+                            for (var t : incoming.join()) {
+                                if (t.from() != null && t.from().equalsIgnoreCase(w.address()))
+                                    continue; // sent to itself
                                 String asset = ChainAdapter.NATIVE.equals(t.asset()) ? nativeAssetFor(net) : t.asset();
-                                if (Repository.addIncomingTx(net.key(), t.hash(), t.from(), t.to(), t.amount(), asset, t.fee(), t.status(), t.timestamp())) added++;
+                                if (Repository.addIncomingTx(net.key(), t.hash(), t.from(), t.to(), t.amount(), asset, t.fee(), t.status(), t.timestamp(), t.tokenSymbol()))
+                                    changed++;
                             }
                         } catch (Exception ex) {
                             problems.add(w.name() + " · " + net.name() + ": " + rootMessage(ex));
                         }
+                        if (problems.size() == previousErrors) successfulNetworks.add(net.key());
+                        else failedNetworks.add(net.key());
                         Thread.sleep(400);
                     }
                 }
+                scanComplete = true;
             } catch (Exception ex) {
                 problems.add(rootMessage(ex));
             }
-            final int newCount = added, nets = checked;
+            if (scanComplete) {
+                successfulNetworks.removeAll(failedNetworks);
+                try {
+                    Repository.recordIncomingSync(successfulNetworks);
+                } catch (Exception ex) {
+                    problems.add("Could not save sync history: " + rootMessage(ex));
+                }
+            }
+            final int changedCount = changed, nets = checked;
             final List<String> errs = problems;
             Platform.runLater(() -> {
                 incomingSyncInFlight.set(false);
                 String time = java.time.LocalTime.now().withNano(0).toString();
                 if (incomingSyncLabel != null && "Transactions".equals(currentPage))
-                    incomingSyncLabel.setText("Incoming: synced " + time + " · " + newCount + " new" + (errs.isEmpty() ? "" : " · " + errs.size() + " source(s) failed"));
-                if (newCount > 0 && "Transactions".equals(currentPage)) renderTransactionList(transactionList);
-                if (!errs.isEmpty() && manual) error("Some incoming sources could not be read:\n" + String.join("\n", errs));
-                else if (manual) notifyStatus("Incoming sync done: " + newCount + " new from " + nets + " wallet/network pair(s).");
+                    incomingSyncLabel.setText("Incoming: checked " + time + " · " + nets + " wallet/network pairs · "
+                            + changedCount + " updated" + (errs.isEmpty() ? "" : " · " + errs.size() + " source(s) failed"));
+                if (changedCount > 0 && "Transactions".equals(currentPage)) renderTransactionList(transactionList);
+                if (!errs.isEmpty() && manual)
+                    error("Some incoming sources could not be read:\n" + String.join("\n", errs));
+                else if (manual)
+                    notifyStatus("Incoming sync done: " + changedCount + " updated from " + nets + " wallet/network pair(s).");
             });
         });
     }
@@ -1875,14 +2145,18 @@ public final class MainView {
         }
     }
 
-    /** The transactions the page currently shows: All/Incoming/Outgoing switch plus search and filters. */
+    /**
+     * The transactions the page currently shows: All/Incoming/Outgoing switch plus search and filters.
+     */
     private List<Repository.Tx> visibleTransactions() throws Exception {
         var all = Repository.transactions();
         var symbols = tokenSymbolsFor(all);
         return all.stream().filter(t -> "ALL".equals(txFilter) || txFilter.equals(t.direction())).filter(t -> matchesTxFilters(t, symbols)).toList();
     }
 
-    /** Exports exactly the filtered result (not the whole history), newest first like the page. */
+    /**
+     * Exports exactly the filtered result (not the whole history), newest first like the page.
+     */
     private void exportTransactions() {
         List<Repository.Tx> rows;
         int total;
@@ -1913,12 +2187,97 @@ public final class MainView {
         }
     }
 
+    private void showIncomingSyncDetails() {
+        try {
+            var wallets = Repository.wallets();
+            var history = Repository.incomingSyncHistory();
+            Set<String> eligible = new HashSet<>();
+            var networks = Repository.networks();
+            for (var wallet : wallets)
+                for (var network : incomingHistoryNetworks(wallet, networks)) eligible.add(network.key());
+            var lines = networks.stream().filter(n -> eligible.contains(n.key()))
+                    .map(n -> {
+                        var when = history.get(n.key());
+                        return n.name() + "  ·  " + (when == null ? "No successful sync yet" : localTime(when));
+                    }).toList();
+            alert("Incoming sync details", lines.isEmpty() ? "No wallet and network pairs available." : String.join("\n", lines));
+        } catch (Exception ex) {
+            error(rootMessage(ex));
+        }
+    }
+
+    private void lookupIncomingTransaction() {
+        try {
+            var networks = Repository.networks().stream().filter(n -> "EVM".equalsIgnoreCase(n.family())).toList();
+            if (networks.isEmpty()) throw new IllegalStateException("Configure an EVM network first.");
+            ComboBox<String> network = new ComboBox<>();
+            network.getItems().setAll(networks.stream().map(Repository.Network::key).toList());
+            network.setCellFactory(list -> filterCell(this::networkNameOrKey));
+            network.setButtonCell(filterCell(this::networkNameOrKey));
+            network.setValue(network.getItems().contains(txNetworkFilter) ? txNetworkFilter : network.getItems().getFirst());
+            TextField hash = new TextField();
+            hash.setPromptText("0x…");
+            Dialog<ButtonType> dialog = new Dialog<>();
+            styleDialog(dialog);
+            dialog.setTitle("Find incoming EVM transaction");
+            dialog.setHeaderText("Search by transaction hash");
+            dialog.getDialogPane().setContent(new VBox(10, fieldCard("Network", network), fieldCard("Transaction hash", hash)));
+            dialog.getDialogPane().setPrefWidth(560);
+            ButtonType find = new ButtonType("Find transaction", ButtonBar.ButtonData.OK_DONE);
+            dialog.getDialogPane().getButtonTypes().addAll(find, ButtonType.CANCEL);
+            if (dialog.showAndWait().orElse(ButtonType.CANCEL) != find) return;
+            var selected = networkByKey(network.getValue());
+            String value = hash.getText().trim();
+            notifyStatus("Looking up incoming transaction…");
+            CompletableFuture.supplyAsync(() -> {
+                try {
+                    var wallets = Repository.wallets().stream().filter(w -> walletMatchesNetwork(w, selected))
+                            .map(Repository.Wallet::address).toList();
+                    var tokens = Repository.tokens(selected.key()).stream()
+                            .map(t -> new EvmAdapter.TokenInfo(t.contract(), t.symbol(), t.decimals(), t.name())).toList();
+                    var evm = (EvmAdapter) adapterFor(selected);
+                    var found = evm.lookupIncoming(value, wallets, tokens);
+                    if (found.isEmpty()) throw new IllegalStateException(
+                            "No incoming native transfer or tracked token transfer matched a saved wallet on this network.");
+                    int changed = 0;
+                    for (var row : found) {
+                        String asset = ChainAdapter.NATIVE.equals(row.asset()) ? nativeAssetFor(selected) : row.asset();
+                        if (Repository.addIncomingTx(selected.key(), row.hash(), row.from(), row.to(), row.amount(),
+                                asset, row.fee(), row.status(), row.timestamp(), row.tokenSymbol())) changed++;
+                    }
+                    return changed;
+                } catch (Exception ex) {
+                    throw new java.util.concurrent.CompletionException(ex);
+                }
+            }).whenComplete((count, failure) -> Platform.runLater(() -> {
+                if (failure != null) {
+                    notifyStatus("Transaction lookup failed.");
+                    error(rootMessage(failure));
+                } else {
+                    if ("Transactions".equals(currentPage)) renderTransactionList(transactionList);
+                    String message = count == 0 ? "Matching transfers are already in history." : count + " incoming transfer(s) imported.";
+                    notifyStatus(message);
+                    if ("Transactions".equals(currentPage) && confirm("Incoming transfer found", message + "\nShow this hash in Transactions?")) {
+                        txFilter = "IN";
+                        txSearch = value;
+                        txNetworkFilter = selected.key();
+                        txAssetFilter = txStatusFilter = null;
+                        txFrom = txTo = null;
+                        showPage("Transactions");
+                    }
+                }
+            }));
+        } catch (Exception ex) {
+            error(rootMessage(ex));
+        }
+    }
+
     private String csv(String s) {
         return "\"" + (s == null ? "" : s.replace("\"", "\"\"")) + "\"";
     }
 
     private VBox simulationsPage() {
-        VBox v = pageShell("Simulations", "Run one batch at a time. The next simulation stays locked until every transfer in the current batch reaches a final result.");
+        VBox v = pageShell("Simulations", "Prepare a batch, review amounts and network fees, then run it.");
         ComboBox<Repository.Network> network = new ComboBox<>();
         try {
             network.getItems().addAll(Repository.networks().stream().filter(Repository.Network::enabled).toList());
@@ -1954,7 +2313,6 @@ public final class MainView {
         ComboBox<Repository.RecipientGroup> group = new ComboBox<>();
         group.setMaxWidth(Double.MAX_VALUE);
         ListView<Repository.Recipient> recips = new ListView<>();
-        recips.setPrefHeight(210);
         recips.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         recips.setCellFactory(lv -> new ListCell<>() {
             protected void updateItem(Repository.Recipient r, boolean empty) {
@@ -1962,7 +2320,10 @@ public final class MainView {
                 setText(empty || r == null ? null : safe(r.label()) + " · " + recipientDisplay(r.address()));
             }
         });
-        TextField min = new TextField("0.001"), max = new TextField("0.003"), minDelay = new TextField("5"), maxDelay = new TextField("20");
+        TextField min = new TextField("0.001"), max = new TextField("0.003");
+        TextField minDelay = new TextField("5"), maxDelay = new TextField("20");
+        ComboBox<DelayUnit> minDelayUnit = delayUnitSelector();
+        ComboBox<DelayUnit> maxDelayUnit = delayUnitSelector();
         ComboBox<String> asset = new ComboBox<>();
         asset.setMaxWidth(Double.MAX_VALUE);
         asset.setCellFactory(lv -> new ListCell<>() {
@@ -2023,8 +2384,82 @@ public final class MainView {
         network.setOnAction(e -> refreshNetwork.run());
         group.setOnAction(e -> refreshRecipients(group, recips));
         refreshNetwork.run();
+        ComboBox<Repository.SimulationTemplate> templates = new ComboBox<>();
+        templates.setPromptText("Select a template");
+        templates.setPrefWidth(200);
+        try {
+            templates.getItems().setAll(Repository.simulationTemplates());
+        } catch (Exception ex) {
+            error(rootMessage(ex));
+        }
+        Button saveTemplate = new Button("Save template");
+        Button loadTemplate = new Button("Load");
+        Button deleteTemplate = new Button("Delete template");
+        for (Button button : List.of(saveTemplate, loadTemplate, deleteTemplate)) button.getStyleClass().add("secondary");
+        loadTemplate.disableProperty().bind(templates.valueProperty().isNull());
+        deleteTemplate.disableProperty().bind(templates.valueProperty().isNull());
+        saveTemplate.setOnAction(e -> {
+            try {
+                if (network.getValue() == null || group.getValue() == null || asset.getValue() == null)
+                    throw new IllegalArgumentException("Choose a network, asset and recipient group first.");
+                String name = ask("Save template", "Template name:", false).orElse("").trim();
+                if (name.isEmpty()) return;
+                var low = new BigDecimal(min.getText().trim());
+                var high = new BigDecimal(max.getText().trim());
+                long delayLow = minDelayUnit.getValue().parseMillis(minDelay.getText());
+                long delayHigh = maxDelayUnit.getValue().parseMillis(maxDelay.getText());
+                if (low.signum() <= 0 || high.compareTo(low) < 0 || delayLow < 0 || delayHigh < delayLow)
+                    throw new IllegalArgumentException("Check the amount and delay ranges before saving.");
+                var template = new Repository.SimulationTemplate(name, network.getValue().key(), asset.getValue(),
+                        group.getValue().id(), min.getText(), max.getText(), minDelay.getText(), minDelayUnit.getValue().name(),
+                        maxDelay.getText(), maxDelayUnit.getValue().name());
+                Repository.saveSimulationTemplate(template);
+                templates.getItems().setAll(Repository.simulationTemplates());
+                templates.setValue(template);
+            } catch (Exception ex) {
+                error(rootMessage(ex));
+            }
+        });
+        loadTemplate.setOnAction(e -> {
+            var template = templates.getValue();
+            try {
+                var savedNetwork = network.getItems().stream().filter(n -> n.key().equals(template.network())).findFirst()
+                        .orElseThrow(() -> new IllegalStateException("Enable the template's network first."));
+                var savedGroup = Repository.recipientGroups(savedNetwork.key()).stream()
+                        .filter(g -> g.id() == template.groupId()).findFirst()
+                        .orElseThrow(() -> new IllegalStateException("The template's recipient group no longer exists."));
+                if (!nativeAssetFor(savedNetwork).equalsIgnoreCase(template.asset())
+                        && Repository.tokens(savedNetwork.key()).stream().noneMatch(t -> ("ERC20:" + t.contract()).equalsIgnoreCase(template.asset())))
+                    throw new IllegalStateException("Add the template's tracked token first.");
+                if (!savedNetwork.equals(network.getValue())) network.setValue(savedNetwork);
+                group.setValue(savedGroup);
+                asset.setValue(asset.getItems().stream().filter(a -> a.equalsIgnoreCase(template.asset())).findFirst().orElseThrow());
+                min.setText(template.minAmount());
+                max.setText(template.maxAmount());
+                minDelay.setText(template.minDelay());
+                maxDelay.setText(template.maxDelay());
+                minDelayUnit.setValue(DelayUnit.valueOf(template.minUnit()));
+                maxDelayUnit.setValue(DelayUnit.valueOf(template.maxUnit()));
+                recips.getSelectionModel().clearSelection();
+                notifyStatus("Template loaded. Select recipients before review.");
+            } catch (Exception ex) {
+                error(rootMessage(ex));
+            }
+        });
+        deleteTemplate.setOnAction(e -> {
+            var template = templates.getValue();
+            try {
+                if (!confirm("Delete template?", "Remove the saved template “" + template.name() + "”?")) return;
+                Repository.deleteSimulationTemplate(template.name());
+                templates.getItems().setAll(Repository.simulationTemplates());
+                templates.setValue(null);
+            } catch (Exception ex) {
+                error(rootMessage(ex));
+            }
+        });
         VBox config = panel();
-        config.getChildren().add(section("SIMULATION CONFIGURATION"));
+        FlowPane templateActions = new FlowPane(8, 8, templates, loadTemplate, saveTemplate, deleteTemplate);
+        config.getChildren().addAll(section("1 · PREPARE SIMULATION"), templateActions);
         GridPane configGrid = new GridPane();
         configGrid.setHgap(12);
         configGrid.setVgap(10);
@@ -2039,15 +2474,16 @@ public final class MainView {
         configGrid.add(fieldCard("Asset", asset), 1, 1);
         configGrid.add(fieldCard("Minimum amount", min), 0, 2);
         configGrid.add(fieldCard("Maximum amount", max), 1, 2);
-        configGrid.add(fieldCard("Minimum delay · sec", minDelay), 0, 3);
-        configGrid.add(fieldCard("Maximum delay · sec", maxDelay), 1, 3);
+        configGrid.add(fieldCard("Minimum delay", minDelayUnit, minDelay), 0, 3);
+        configGrid.add(fieldCard("Maximum delay", maxDelayUnit, maxDelay), 1, 3);
         configGrid.add(tokenMeta, 0, 4, 2, 1);
         config.getChildren().add(configGrid);
         VBox targets = panel();
         targets.getChildren().addAll(section("RECIPIENT BATCH"), muted("Select recipients from the chosen network and group."), recips);
         recips.setPrefHeight(265);
         recips.setMinHeight(220);
-        recips.setMaxHeight(300);
+        recips.setMaxHeight(Double.MAX_VALUE);
+        VBox.setVgrow(recips, Priority.ALWAYS);
         HBox setupCards = new HBox(14, config, targets);
         HBox.setHgrow(config, Priority.ALWAYS);
         HBox.setHgrow(targets, Priority.ALWAYS);
@@ -2062,8 +2498,11 @@ public final class MainView {
         bar.setMaxWidth(Double.MAX_VALUE);
         bar.getStyleClass().add("monitor-progress");
         VBox activity = new VBox(7);
-        monitor.getChildren().addAll(section("LIVE SIMULATION MONITOR"), cards, progress, bar, activity);
-        Button start = primary("▶ Start simulation", () -> startSimulation(wallet.getValue(), network.getValue(), group.getValue(), min.getText(), max.getText(), minDelay.getText(), maxDelay.getText(), asset.getValue(), new ArrayList<>(recips.getSelectionModel().getSelectedItems())));
+        monitor.getChildren().addAll(section("3 · EXECUTION"), cards, progress, bar, activity);
+        Button start = primary("Review simulation", () -> reviewSimulation(
+                wallet.getValue(), network.getValue(), group.getValue(), min.getText(), max.getText(),
+                minDelay.getText(), minDelayUnit.getValue(), maxDelay.getText(), maxDelayUnit.getValue(),
+                asset.getValue(), new ArrayList<>(recips.getSelectionModel().getSelectedItems())));
         Button stop = new Button("■ Stop after current transfer");
         stop.getStyleClass().add("secondary");
         stop.setOnAction(e -> {
@@ -2083,7 +2522,6 @@ public final class MainView {
         simActivity = activity;
         simStart = start;
         simStop = stop;
-        sim.running = simulationLock.isRunning();
         applySimState();
         HBox controls = new HBox(10, start, stop);
         VBox summary = simulationSummaryPanel();
@@ -2091,11 +2529,12 @@ public final class MainView {
         simStatusTimer = new Timeline(new KeyFrame(Duration.seconds(20), e -> pollPendingTransactions(true)));
         simStatusTimer.setCycleCount(Timeline.INDEFINITE);
         simStatusTimer.play();
-        v.getChildren().addAll(setupCards, monitor, controls, summary, muted("EVM: native ETH + tracked ERC-20 tokens. Solana: native SOL. XRP: native XRP (a new recipient account needs at least the 1 XRP base reserve, otherwise the payment fails and the fee is still charged). Bitcoin: native BTC (back-to-back transfers chain unconfirmed change; keep batches small). Only contracts verified and saved in Wallets appear in this asset selector. Mainnet networks spend real funds and are disabled until you enable them in Networks."));
+        v.getChildren().addAll(setupCards, controls, monitor, summary, muted("EVM: native ETH + tracked ERC-20 tokens. Solana: native SOL. XRP: native XRP (a new recipient account needs at least the 1 XRP base reserve, otherwise the payment fails and the fee is still charged). Bitcoin: native BTC (back-to-back transfers chain unconfirmed change; keep batches small). Only contracts verified and saved in Wallets appear in this asset selector. Mainnet networks spend real funds and are disabled until you enable them in Networks."));
         return v;
     }
 
-    private record SimRow(int n, String label, String address, String amount, String asset, String status, String hash, String network, String error) {
+    private record SimRow(long id, int n, String label, String address, String amount, String asset, String status, String hash,
+                          String network, String error) {
     }
 
     private static String localTime(String utc) {
@@ -2195,6 +2634,8 @@ public final class MainView {
         // Rebuilds the table from the stored transfers of the selected batch.
         Runnable loadRows = () -> {
             var job = jobs.getValue();
+            var selectedIds = table.getSelectionModel().getSelectedItems().stream().map(SimRow::id)
+                    .collect(java.util.stream.Collectors.toSet());
             table.getItems().clear();
             if (job == null) {
                 totals.setText("");
@@ -2202,14 +2643,15 @@ public final class MainView {
             }
             try {
                 Map<String, String> labels = new HashMap<>();
-                for (var r : Repository.recipients(job.network())) labels.put(recipientDisplay(r.address()), safe(r.label()));
+                for (var r : Repository.recipients(job.network()))
+                    labels.put(recipientDisplay(r.address()), safe(r.label()));
                 List<SimRow> rows = new ArrayList<>();
                 int n = 0;
                 BigDecimal sentAmt = BigDecimal.ZERO, confAmt = BigDecimal.ZERO, failAmt = BigDecimal.ZERO;
                 int conf = 0, pend = 0, fail = 0;
                 String asset = "";
                 for (var t : Repository.txsForJob(job.id())) {
-                    rows.add(new SimRow(++n, labels.getOrDefault(t.to(), ""), safe(t.to()), safe(t.amount()), safe(t.asset()), t.status(), t.hash(), t.network(), t.error()));
+                    rows.add(new SimRow(t.id(), ++n, labels.getOrDefault(t.to(), ""), recipientDisplay(safe(t.to())), safe(t.amount()), safe(t.asset()), t.status(), t.hash(), t.network(), t.error()));
                     asset = safe(t.asset());
                     BigDecimal a;
                     try {
@@ -2227,13 +2669,17 @@ public final class MainView {
                             fail++;
                             failAmt = failAmt.add(a);
                         }
-                        default -> {
+                        case "PENDING", "SUBMITTED" -> {
                             pend++;
                             sentAmt = sentAmt.add(a);
+                        }
+                        default -> {
                         }
                     }
                 }
                 table.getItems().setAll(rows);
+                for (int index = 0; index < rows.size(); index++)
+                    if (selectedIds.contains(rows.get(index).id())) table.getSelectionModel().select(index);
                 recipientsV.setText(rows.size() + " / " + job.recipients());
                 sentV.setText(String.valueOf(conf + pend));
                 confirmedV.setText(String.valueOf(conf));
@@ -2342,11 +2788,46 @@ public final class MainView {
         menu.getItems().addAll(copyAddr, copyHash);
         table.setContextMenu(menu);
 
-        HBox actions = new HBox(10, refresh, copyTable, export, open);
-        panel.getChildren().addAll(section("SIMULATION SUMMARY"), muted("Who received how much in a batch. Pick an earlier batch from the list; click a column header to sort, right-click a row to copy."),
+        table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        Button retry = new Button("Review selected for retry");
+        retry.getStyleClass().add("secondary");
+        retry.disableProperty().bind(table.getSelectionModel().selectedItemProperty().isNull());
+        retry.setOnAction(e -> reviewRetries(jobs.getValue(), table.getSelectionModel().getSelectedItems().stream()
+                .map(SimRow::id).collect(java.util.stream.Collectors.toSet())));
+        FlowPane actions = new FlowPane(10, 8, refresh, copyTable, export, open, retry);
+        panel.getChildren().addAll(section("SIMULATION SUMMARY"),
+                muted("Select planned transfers or confirmed failures to review a retry. Pending and unknown submissions require investigation."),
                 jobs, metrics, totals, table, actions);
         simSummaryReload.run();
         return panel;
+    }
+
+    private void reviewRetries(Repository.SimJob job, Set<Long> ids) {
+        try {
+            if (job == null || ids.isEmpty()) return;
+            var eligible = Repository.retryableTransfers(job.id()).stream().filter(t -> ids.contains(t.id())).toList();
+            if (eligible.size() != ids.size())
+                throw new IllegalArgumentException("Choose only unsent planned rows or failed rows with an on-chain hash that have not already been retried.");
+            var first = eligible.getFirst();
+            if (eligible.stream().anyMatch(t -> !Objects.equals(t.asset(), first.asset()) || !Objects.equals(t.from(), first.from())))
+                throw new IllegalArgumentException("Retry rows must share an asset and sender.");
+            var network = networkByKey(job.network());
+            var wallet = Repository.wallets().stream().filter(w -> walletMatchesNetwork(w, network))
+                    .filter(w -> "EVM".equalsIgnoreCase(w.family()) ? w.address().equalsIgnoreCase(first.from()) : w.address().equals(first.from()))
+                    .findFirst().orElseThrow(() -> new IllegalStateException("The original sender wallet is unavailable."));
+            long delayLow = 5000, delayHigh = 20000;
+            for (String option : safe(job.config()).split(";")) {
+                if (!option.startsWith("delayMs=")) continue;
+                String[] range = option.substring(8).split(java.util.regex.Pattern.quote(".."));
+                if (range.length == 2) {
+                    delayLow = Long.parseLong(range[0]);
+                    delayHigh = Long.parseLong(range[1]);
+                }
+            }
+            prepareSimulation(wallet, network, first.asset(), delayLow, delayHigh, List.of(), null, null, eligible);
+        } catch (Exception e) {
+            error(rootMessage(e));
+        }
     }
 
     private String assetLabel(String asset) {
@@ -2368,12 +2849,47 @@ public final class MainView {
         }
     }
 
-    private VBox fieldCard(String title, Control control) {
+    private VBox fieldCard(String title, Control... controls) {
         VBox box = new VBox(5);
-        Label label = muted(title);
-        control.setMaxWidth(Double.MAX_VALUE);
-        box.getChildren().addAll(label, control);
+        box.getChildren().add(muted(title));
+        for (Control control : controls) {
+            control.setMaxWidth(Double.MAX_VALUE);
+            box.getChildren().add(control);
+        }
         return box;
+    }
+
+    private enum DelayUnit {
+        MILLISECONDS("Milliseconds (ms)", 1),
+        SECONDS("Seconds (s)", 1000);
+
+        private final String label;
+        private final int milliseconds;
+
+        DelayUnit(String label, int milliseconds) {
+            this.label = label;
+            this.milliseconds = milliseconds;
+        }
+
+        long parseMillis(String value) {
+            try {
+                return Math.multiplyExact(Long.parseLong(value.trim()), milliseconds);
+            } catch (NumberFormatException | ArithmeticException e) {
+                throw new IllegalArgumentException("Enter a whole number within range for each delay.");
+            }
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    private ComboBox<DelayUnit> delayUnitSelector() {
+        ComboBox<DelayUnit> selector = new ComboBox<>();
+        selector.getItems().setAll(DelayUnit.values());
+        selector.setValue(DelayUnit.SECONDS);
+        return selector;
     }
 
     private Label metricValue(String value) {
@@ -2392,191 +2908,336 @@ public final class MainView {
         return c;
     }
 
-    private void startSimulation(Repository.Wallet w, Repository.Network network, Repository.RecipientGroup group, String minS, String maxS, String minD, String maxD, String asset, List<Repository.Recipient> recipients) {
-        if (!simulationLock.tryAcquire()) {
-            error("A simulation is already running. Wait until every transfer in that batch has finished.");
-            return;
-        }
+    private record SimulationPlan(Repository.Wallet wallet, Repository.Network network, ChainAdapter adapter,
+                                  String asset, List<Repository.PlannedTransfer> transfers, long minDelay,
+                                  long maxDelay,
+                                  BigDecimal total, BigDecimal assetBalance, BigDecimal nativeBalance, BigDecimal fee) {
+    }
+
+    private void reviewSimulation(Repository.Wallet wallet, Repository.Network network, Repository.RecipientGroup group,
+                                  String min, String max, String minDelay, DelayUnit minUnit,
+                                  String maxDelay, DelayUnit maxUnit, String asset, List<Repository.Recipient> recipients) {
         try {
-            if (w == null || network == null || group == null)
-                throw new IllegalArgumentException("Select network, sender wallet and recipient group.");
-            if (!AdapterFactory.isSupported(network))
-                throw new IllegalArgumentException("This network has no live adapter yet. Only EVM, Solana and Bitcoin networks can send transfers.");
-            if (!network.enabled())
-                throw new IllegalArgumentException("This network is disabled. Enable it in Networks first.");
-            if (!walletMatchesNetwork(w, network))
-                throw new IllegalArgumentException("Sender wallet does not belong to the selected network.");
-            if (!group.network().equals(network.key()))
-                throw new IllegalArgumentException("Recipient group belongs to a different network.");
-            if (recipients.isEmpty()) throw new IllegalArgumentException("Select at least one recipient.");
-            for (var r : recipients)
-                if (!r.network().equals(network.key()) || r.groupId() != group.id())
-                    throw new IllegalArgumentException("Recipient selection contains an address from another network or group.");
-            BigDecimal lo = new BigDecimal(minS), hi = new BigDecimal(maxS);
-            int dlo = Integer.parseInt(minD), dhi = Integer.parseInt(maxD);
-            if (lo.signum() <= 0 || hi.compareTo(lo) < 0 || dlo < 0 || dhi < dlo)
-                throw new IllegalArgumentException("Check amount and delay ranges.");
-            boolean evmToken = EvmAdapter.isToken(asset);
-            String expectedAsset = nativeAssetFor(network);
-            if (network.family().equalsIgnoreCase("SOLANA") && !expectedAsset.equalsIgnoreCase(asset))
-                throw new IllegalArgumentException("Solana currently supports native SOL only.");
-            if (network.family().equalsIgnoreCase("BITCOIN") && !expectedAsset.equalsIgnoreCase(asset))
-                throw new IllegalArgumentException("Bitcoin currently supports native BTC only.");
-            if (network.family().equalsIgnoreCase("XRP") && !expectedAsset.equalsIgnoreCase(asset))
-                throw new IllegalArgumentException("XRP Ledger currently supports native XRP only.");
-            if (network.family().equalsIgnoreCase("EVM") && !expectedAsset.equalsIgnoreCase(asset) && !evmToken)
-                throw new IllegalArgumentException("Select " + expectedAsset + " or an ERC-20 contract.");
-            if (evmToken) {
-                String contract = EvmAdapter.tokenContract(asset);
-                validateEvmAddress(contract);
-                ((EvmAdapter) adapterFor(network)).tokenInfo(contract).join();
-            }
-            String key = unlockedKeys.get(w.id());
-            if (key == null) {
-                String pass = ask("Unlock sender wallet", "Enter vault password for " + w.name() + ":", true).orElse("");
-                if (pass.isEmpty()) {
-                    simulationLock.release();
-                    return;
-                }
-                byte[] raw = WalletVault.open(pass.toCharArray(), w.encrypted(), w.salt());
-                key = new String(raw, StandardCharsets.UTF_8);
-                Arrays.fill(raw, (byte) 0);
-                unlockedKeys.put(w.id(), key);
-            }
-            final String privateKey = key;
-            ChainAdapter adapter = adapterFor(network);
-            String summary = "Network: " + network.name() + "\nSender: " + w.address() + "\nGroup: " + group.name() + "\nRecipients: " + recipients.size() + "\nAmount: " + lo + "–" + hi + " " + asset;
-            boolean approved;
-            if (network.testnet()) {
-                approved = confirm("Start " + network.name() + " simulation?", summary + "\n\nTransfers will be sent sequentially. Testnet only.");
-            } else {
-                BigDecimal worst = hi.multiply(BigDecimal.valueOf(recipients.size()));
-                String typed = ask("⚠ MAINNET — REAL FUNDS", summary + "\n\nWorst-case total (excluding network fees): " + worst.toPlainString() + " " + assetLabel(asset) + "\nEvery transfer is irreversible. Check the sender, recipients and amounts above.\n\nType MAINNET to start:", false).orElse("");
-                approved = "MAINNET".equals(typed.trim());
-            }
-            if (!approved) {
-                simulationLock.release();
-                return;
-            }
-            stopRequested = false;
-            sim.finishedUnseen = false;
-            sim.reset(recipients.size());
-            sim.running = true;
-            sim.progress = "Starting batch: " + recipients.size() + " recipient(s) on " + network.name();
-            applySimState();
-            startSimulationWorker(w, network, adapter, privateKey, recipients, lo, hi, dlo, dhi, asset);
+            if (wallet == null || network == null || group == null || asset == null)
+                throw new IllegalArgumentException("Select a network, sender wallet, recipient group and asset.");
+            if (!network.key().equals(group.network()) || recipients.isEmpty())
+                throw new IllegalArgumentException("Select one or more recipients from this network and group.");
+            for (var recipient : recipients)
+                if (!network.key().equals(recipient.network()) || group.id() != recipient.groupId())
+                    throw new IllegalArgumentException("One or more recipients belong to a different network or group.");
+            BigDecimal low = new BigDecimal(min.trim()), high = new BigDecimal(max.trim());
+            long delayLow = minUnit.parseMillis(minDelay), delayHigh = maxUnit.parseMillis(maxDelay);
+            if (low.signum() <= 0 || high.compareTo(low) < 0 || delayLow < 0 || delayHigh < delayLow)
+                throw new IllegalArgumentException("Check the amount and delay ranges.");
+            prepareSimulation(wallet, network, asset, delayLow, delayHigh, recipients, low, high, List.of());
         } catch (Exception e) {
-            simulationLock.release();
-            sim.running = false;
-            applySimState();
             error(rootMessage(e));
         }
     }
 
-    private void startSimulationWorker(Repository.Wallet wallet, Repository.Network network, ChainAdapter adapter, String key, List<Repository.Recipient> recipients, BigDecimal lo, BigDecimal hi, int dlo, int dhi, String asset) {
+    private void prepareSimulation(Repository.Wallet wallet, Repository.Network network, String asset,
+                                   long minDelay, long maxDelay, List<Repository.Recipient> recipients,
+                                   BigDecimal low, BigDecimal high, List<Repository.Tx> retryRows) {
+        if (!simulationLock.tryAcquire()) {
+            error("A simulation is already being reviewed or executed.");
+            return;
+        }
+        if (simStart != null) simStart.setDisable(true);
+        var pageAtRequest = root.getCenter();
+        notifyStatus("Checking balances, recipients and fees…");
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                Repository.Network latest = networkByKey(network.key());
+                if (!latest.equals(network) || !latest.enabled() || !walletMatchesNetwork(wallet, latest)
+                        || Repository.wallets().stream().noneMatch(candidate -> candidate.id() == wallet.id()))
+                    throw new IllegalStateException("The sender or network changed. Select them again.");
+                String nativeAsset = nativeAssetFor(latest);
+                ChainAdapter adapter = adapterFor(latest);
+                boolean token = adapter instanceof EvmAdapter && EvmAdapter.isToken(asset);
+                if (!token && !nativeAsset.equalsIgnoreCase(asset))
+                    throw new IllegalArgumentException("Select a supported asset.");
+                int decimals = switch (adapter.family().toUpperCase(Locale.ROOT)) {
+                    case "EVM" ->
+                            token ? ((EvmAdapter) adapter).tokenInfo(EvmAdapter.tokenContract(asset)).join().decimals() : 18;
+                    case "SOLANA" -> 9;
+                    case "XRP" -> 6;
+                    default -> 8;
+                };
+                var transfers = new ArrayList<Repository.PlannedTransfer>();
+                if (retryRows.isEmpty()) {
+                    var minUnits = amountUnits(low, decimals);
+                    var maxUnits = amountUnits(high, decimals);
+                    var range = maxUnits.subtract(minUnits).add(java.math.BigInteger.ONE);
+                    var random = new SecureRandom();
+                    for (var recipient : recipients) {
+                        java.math.BigInteger offset;
+                        do {
+                            offset = new java.math.BigInteger(range.bitLength(), random);
+                        } while (offset.compareTo(range) >= 0);
+                        transfers.add(new Repository.PlannedTransfer(recipient.address(), new BigDecimal(minUnits.add(offset), decimals), null));
+                    }
+                } else {
+                    for (var row : retryRows) {
+                        if (!"PLANNED".equals(row.status())
+                                && !"FAILED".equalsIgnoreCase(adapter.checkTransactionStatus(row.hash()).join().status()))
+                            throw new IllegalStateException("Could not verify the previous failure for " + row.to() + ".");
+                        var amount = new BigDecimal(row.amount());
+                        amountUnits(amount, decimals);
+                        transfers.add(new Repository.PlannedTransfer(row.to(), amount, row.id()));
+                    }
+                }
+                Set<String> addresses = new HashSet<>();
+                BigDecimal total = BigDecimal.ZERO;
+                for (var transfer : transfers) {
+                    String address = simulationDestination(latest, transfer.address());
+                    String canonical = switch (latest.family().toUpperCase(Locale.ROOT)) {
+                        case "EVM" -> address.toLowerCase(Locale.ROOT);
+                        case "XRP" -> recipientDisplay(address);
+                        default -> address;
+                    };
+                    if (!addresses.add(canonical))
+                        throw new IllegalArgumentException("Duplicate recipient: " + recipientDisplay(address));
+                    total = total.add(transfer.amount());
+                }
+                BigDecimal nativeBalance = new BigDecimal(adapter.getBalance(wallet.address(), nativeAsset).join());
+                BigDecimal assetBalance = token ? new BigDecimal(adapter.getBalance(wallet.address(), asset).join()) : nativeBalance;
+                if (assetBalance.compareTo(total) < 0)
+                    throw new IllegalArgumentException("Insufficient " + assetLabel(asset) + " balance for this plan.");
+                if (nativeBalance.signum() <= 0 || (!token && nativeBalance.compareTo(total) <= 0))
+                    throw new IllegalArgumentException("Leave a " + nativeAsset + " balance for network fees.");
+                BigDecimal fee = switch (adapter) {
+                    case EvmAdapter evm -> evm.estimateBatchFee(wallet.address(), asset, decimals, transfers.stream()
+                            .map(t -> new EvmAdapter.FeeTarget(t.address(), t.amount())).toList());
+                    case BitcoinAdapter bitcoin -> bitcoin.estimateBatchFee(wallet.address(), transfers.stream()
+                            .map(Repository.PlannedTransfer::amount).toList());
+                    case XrpAdapter xrp -> xrp.estimateBatchFee(wallet.address(), total, transfers.size());
+                    case SolanaAdapter solana -> solana.estimateBatchFee(transfers.size());
+                    default -> null;
+                };
+                if (fee != null && nativeBalance.compareTo(token ? fee : total.add(fee)) < 0)
+                    throw new IllegalArgumentException("Insufficient " + nativeAsset + " to cover estimated network fees.");
+                return new SimulationPlan(wallet, latest, adapter, asset, List.copyOf(transfers), minDelay, maxDelay,
+                        total, assetBalance, nativeBalance, fee);
+            } catch (Exception e) {
+                throw new java.util.concurrent.CompletionException(e);
+            }
+        }).whenComplete((plan, failure) -> Platform.runLater(() -> {
+            boolean started = false;
+            try {
+                if (failure != null) throw new IllegalStateException(rootMessage(failure));
+                if (root.getCenter() != pageAtRequest) {
+                    notifyStatus("Simulation review canceled.");
+                    return;
+                }
+                started = approveSimulation(plan);
+                if (!started) notifyStatus("Simulation review canceled.");
+            } catch (Exception e) {
+                notifyStatus("Simulation review stopped.");
+                error(rootMessage(e));
+            } finally {
+                if (!started) {
+                    simulationLock.release();
+                    if (simStart != null) simStart.setDisable(false);
+                }
+            }
+        }));
+    }
+
+    private static java.math.BigInteger amountUnits(BigDecimal amount, int decimals) {
+        try {
+            if (amount.signum() <= 0 || amount.stripTrailingZeros().scale() > decimals
+                    || (long) amount.precision() - amount.scale() + decimals > 78)
+                throw new ArithmeticException();
+            var units = amount.setScale(decimals, java.math.RoundingMode.UNNECESSARY).unscaledValue();
+            if (units.bitLength() > 256) throw new ArithmeticException();
+            return units;
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("Enter a positive amount with at most " + decimals + " decimal places.");
+        }
+    }
+
+    private String simulationDestination(Repository.Network network, String stored) {
+        if ("XRP".equalsIgnoreCase(network.family()) && stored.contains(" · tag ")) {
+            String[] original = stored.split(" · tag ", 2);
+            return storedRecipient(network, original[0], original[1]);
+        }
+        return storedRecipient(network, stored, "");
+    }
+
+    private boolean approveSimulation(SimulationPlan plan) throws Exception {
+        var network = plan.network();
+        var wallet = plan.wallet();
+        String nativeAsset = nativeAssetFor(network);
+        Dialog<Boolean> review = new Dialog<>();
+        styleDialog(review);
+        review.setTitle("2 · Review simulation");
+        review.setHeaderText(network.name() + (network.testnet() ? " · Testnet" : " · Mainnet / real funds"));
+        CheckBox pilot = new CheckBox("Send to the first recipient and wait for confirmation before continuing");
+        pilot.setDisable(plan.transfers().size() < 2);
+        var rows = new ListView<String>();
+        for (var transfer : plan.transfers())
+            rows.getItems().add(recipientDisplay(transfer.address()) + "   ·   " + formatAmount(transfer.amount()));
+        rows.setPrefHeight(220);
+        String fee = plan.fee() == null ? "Fee estimate unavailable. Leave a balance for network fees."
+                : "Estimated network fees: " + formatAmount(plan.fee()) + " " + nativeAsset;
+        Label details = muted(wallet.name() + " · " + wallet.address() + "\nAsset: " + assetLabel(plan.asset())
+                + (EvmAdapter.isToken(plan.asset()) ? "\nContract: " + EvmAdapter.tokenContract(plan.asset()) : "")
+                + "\n" + plan.transfers().size() + " recipients · Total " + formatAmount(plan.total())
+                + "\nAsset balance: " + formatAmount(plan.assetBalance())
+                + " · Fee balance: " + formatAmount(plan.nativeBalance()) + " " + nativeAsset
+                + "\n" + fee + "\nDelay: " + plan.minDelay() + "–" + plan.maxDelay() + " ms");
+        details.setWrapText(true);
+        String warning = "Network fees can change before submission.";
+        if (plan.adapter() instanceof BitcoinAdapter && plan.transfers().size() > 25)
+            warning += " Unconfirmed change may limit how many Bitcoin transfers can be sent before a block confirms.";
+        Label warningLabel = new Label(warning);
+        warningLabel.getStyleClass().add("text-warning");
+        warningLabel.setWrapText(true);
+        review.getDialogPane().setContent(new VBox(12, details, warningLabel, rows, pilot));
+        review.getDialogPane().setPrefWidth(650);
+        ButtonType start = new ButtonType("Start simulation", ButtonBar.ButtonData.OK_DONE);
+        review.getDialogPane().getButtonTypes().setAll(start, ButtonType.CANCEL);
+        review.setResultConverter(selected -> selected == start ? pilot.isSelected() : null);
+        Optional<Boolean> approved = review.showAndWait();
+        if (approved.isEmpty()) return false;
+        if (!network.testnet() && !"MAINNET".equals(ask("Mainnet · real funds",
+                "Type MAINNET to authorize these transfers of real funds:", false).orElse("").trim())) return false;
+        if (!networkByKey(network.key()).equals(network)
+                || Repository.wallets().stream().noneMatch(candidate -> candidate.id() == wallet.id()))
+            throw new IllegalStateException("The sender or network changed. Review again.");
+
+        String key = unlockedKeys.get(wallet.id());
+        if (key == null) {
+            String pass = ask("Unlock sender wallet", "Enter vault password for " + wallet.name() + ":", true).orElse("");
+            if (pass.isEmpty()) return false;
+            byte[] raw = WalletVault.open(pass.toCharArray(), wallet.encrypted(), wallet.salt());
+            try {
+                key = new String(raw, StandardCharsets.UTF_8);
+                unlockedKeys.put(wallet.id(), key);
+            } finally {
+                Arrays.fill(raw, (byte) 0);
+            }
+        }
+        stopRequested = false;
+        sim.finishedUnseen = false;
+        sim.reset(plan.transfers().size());
+        sim.running = true;
+        sim.progress = "Starting on " + network.name();
+        applySimState();
+        startSimulationWorker(plan, key, approved.get());
+        return true;
+    }
+
+    private static String formatAmount(BigDecimal amount) {
+        return amount.stripTrailingZeros().toPlainString();
+    }
+
+    private void startSimulationWorker(SimulationPlan plan, String key, boolean pilot) {
         Thread worker = new Thread(() -> {
             int confirmed = 0, failed = 0, pending = 0, processed = 0;
             long jobId = -1;
+            String stopped = null;
             try {
-                jobId = Repository.createSimulationJob(network.key(), recipients.size(), "amount=" + lo + ".." + hi + ";delay=" + dlo + ".." + dhi + ";asset=" + asset);
-            } catch (Exception ignored) {
-            }
-            final long job = jobId;
-            Platform.runLater(() -> {
-                sim.jobId = job;
-                applySimState();
-            });
-            Random random = new SecureRandom();
-            int amountScale = "SOLANA".equalsIgnoreCase(adapter.family()) ? 9 : "XRP".equalsIgnoreCase(adapter.family()) ? 6 : 8;
-            if (adapter instanceof EvmAdapter evm && EvmAdapter.isToken(asset)) {
-                try {
-                    amountScale = evm.tokenInfo(EvmAdapter.tokenContract(asset)).join().decimals();
-                } catch (Exception ignored) {
-                    amountScale = 8;
-                }
-            }
-            final int transferScale = amountScale;
-            try {
-                for (var r : recipients) {
+                jobId = Repository.createSimulationJob(plan.network().key(), plan.wallet().address(), plan.asset(),
+                        plan.transfers(), "delayMs=" + plan.minDelay() + ".." + plan.maxDelay() + ";pilot=" + pilot);
+                var rows = Repository.txsForJob(jobId);
+                if (rows.size() != plan.transfers().size())
+                    throw new IllegalStateException("Saved plan is incomplete.");
+                long job = jobId;
+                Platform.runLater(() -> {
+                    sim.jobId = job;
+                    applySimState();
+                });
+                Random random = new SecureRandom();
+                for (var row : rows) {
                     if (stopRequested) break;
-                    BigDecimal amount = lo.add(hi.subtract(lo).multiply(BigDecimal.valueOf(random.nextDouble()))).setScale(transferScale, java.math.RoundingMode.DOWN);
-                    long txId = -1;
-                    try {
-                        txId = Repository.addTx(network.key(), null, wallet.address(), recipientDisplay(r.address()), amount.toPlainString(), asset, null, "PENDING", null, job);
-                        pending++;
-                    } catch (Exception ignored) {
-                    }
-                    final int p0 = pending;
+                    if (!networkByKey(plan.network().key()).equals(plan.network()))
+                        throw new IllegalStateException("The network changed. Review the remaining transfers before sending.");
+                    if (!Repository.claimPlannedTransfer(row.id()))
+                        throw new IllegalStateException("A planned transfer has already been claimed or retried.");
+                    int waiting = pending + 1;
                     Platform.runLater(() -> {
-                        sim.pending = p0;
-                        sim.progress = "Submitting to " + shortRecipient(r.address()) + " · " + amount + " " + asset;
-                        sim.addLine("PENDING · " + shortRecipient(r.address()) + " · " + amount + " " + asset);
+                        sim.pending = waiting;
+                        sim.progress = "Submitting " + row.amount() + " to " + shortRecipient(row.to());
                         applySimState();
                     });
-                    String rowStatus = "FAILED";
+                    ChainAdapter.TransferResult result;
                     try {
-                        ChainAdapter.TransferResult result = adapter.transfer(key, r.address(), amount, asset).join();
-                        if (txId > 0) Repository.updateTx(txId, result.hash(), result.fee(), result.status(), result.error());
-                        if ("CONFIRMED".equalsIgnoreCase(result.status())) {
-                            pending--;
-                            confirmed++;
-                            rowStatus = "CONFIRMED";
-                        } else if ("PENDING".equalsIgnoreCase(result.status()) || "SUBMITTED".equalsIgnoreCase(result.status())) {
-                            rowStatus = "PENDING";
-                        } else {
-                            pending--;
-                            failed++;
-                            rowStatus = "FAILED";
-                        }
-                    } catch (Exception ex) {
-                        pending--;
-                        failed++;
-                        String message = rootMessage(ex);
-                        try {
-                            if (txId > 0) Repository.updateTx(txId, null, null, "FAILED", message);
-                            else
-                                Repository.addTx(network.key(), null, wallet.address(), recipientDisplay(r.address()), amount.toPlainString(), asset, null, "FAILED", message, job);
-                        } catch (Exception ignored) {
-                        }
+                        result = plan.adapter().transfer(key, simulationDestination(plan.network(), row.to()),
+                                new BigDecimal(row.amount()), plan.asset()).join();
+                    } catch (Exception e) {
+                        Repository.updateTx(row.id(), null, null, "UNKNOWN", rootMessage(e));
+                        pending++;
+                        processed++;
+                        stopped = "Submission outcome unknown. Check the wallet history before retrying.";
+                        break;
                     }
+                    Repository.updateTx(row.id(), result.hash(), result.fee(), result.status(), result.error());
                     processed++;
-                    final int c = confirmed, f = failed, p = pending, done = processed;
-                    final String status = rowStatus;
+                    String status = result.status().toUpperCase(Locale.ROOT);
+                    if (pilot && processed == 1) {
+                        status = awaitPilotConfirmation(plan.adapter(), row.id(), result);
+                    }
+                    switch (status) {
+                        case "CONFIRMED", "SUCCESS" -> confirmed++;
+                        case "FAILED" -> failed++;
+                        default -> pending++;
+                    }
+                    int c = confirmed, f = failed, p = pending, done = processed;
+                    String finalStatus = status;
                     Platform.runLater(() -> {
                         sim.done = done;
                         sim.confirmed = c;
                         sim.pending = p;
                         sim.failed = f;
-                        sim.progress = "Execution " + Math.round(100.0 * done / recipients.size()) + "% · " + c + " confirmed · " + p + " pending · " + f + " failed";
-                        if (!sim.lines.isEmpty()) sim.lines.set(0, status + " · " + shortRecipient(r.address()) + " · " + amount + " " + asset);
+                        sim.progress = "Processed " + done + " / " + rows.size();
+                        sim.addLine(finalStatus + " · " + shortRecipient(row.to()) + " · " + row.amount() + " " + plan.asset());
                         applySimState();
                     });
-                    if (!stopRequested && processed < recipients.size()) try {
-                        Thread.sleep((long) (dlo + (dhi - dlo) * random.nextDouble()) * 1000L);
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                        break;
+                    if (pilot && processed == 1 && !stopRequested) {
+                        if (!"CONFIRMED".equals(status) && !"SUCCESS".equals(status)) {
+                            stopped = "Pilot did not confirm. Remaining transfers are saved as planned.";
+                            break;
+                        }
+                        if (!approveRemaining(result.hash(), rows.size() - 1)) {
+                            stopped = "Pilot confirmed. Remaining transfers are saved as planned.";
+                            break;
+                        }
+                    }
+                    if (!stopRequested && processed < rows.size()) {
+                        long delay = plan.minDelay() == plan.maxDelay() ? plan.minDelay()
+                                : random.nextLong(plan.minDelay(), plan.maxDelay());
+                        while (!stopRequested && delay > 0) {
+                            long step = Math.min(delay, 250);
+                            Thread.sleep(step);
+                            delay -= step;
+                        }
                     }
                 }
+            } catch (Exception e) {
+                stopped = rootMessage(e);
             } finally {
-                final int c = confirmed, f = failed, p = pending, done = processed;
-                String finalState = stopRequested ? "STOPPED" : (failed > 0 ? "COMPLETED_WITH_ERRORS" : "COMPLETED");
+                boolean incomplete = stopRequested || stopped != null;
+                String message = stopped != null ? stopped : stopRequested ? "Stopped. Unsent transfers are saved as planned." : "Simulation finished.";
                 try {
-                    if (jobId > 0) Repository.updateSimulationJob(jobId, finalState, confirmed, failed);
+                    if (jobId > 0)
+                        Repository.updateSimulationJob(jobId, incomplete ? "STOPPED" : failed > 0 ? "COMPLETED_WITH_ERRORS" : "COMPLETED", confirmed, failed);
                 } catch (Exception ignored) {
                 }
-                simulationLock.release();
+                int c = confirmed, f = failed, p = pending, done = processed;
                 Platform.runLater(() -> {
+                    simulationLock.release();
                     sim.running = false;
                     sim.finishedUnseen = !"Simulations".equals(currentPage);
                     sim.done = done;
                     sim.confirmed = c;
                     sim.pending = p;
                     sim.failed = f;
-                    sim.progress = "Finished · sent " + done + " / " + recipients.size() + " · " + c + " confirmed · " + p + " pending · " + f + " failed" + (stopRequested ? " · stopped" : "");
+                    sim.progress = message;
                     applySimState();
-                    notifyStatus("Simulation finished");
-                    alert("Simulation finished", "Network: " + network.name() + "\nSent: " + done + " / " + recipients.size() + "\nConfirmed: " + c + "\nPending: " + p + "\nFailed: " + f + "\n\nCheck Transactions for hashes and final status.");
+                    notifyStatus(message);
+                    alert(incomplete ? "Simulation stopped" : "Simulation finished", message + "\n\nProcessed: " + done
+                            + " / " + plan.transfers().size() + "\nConfirmed: " + c + "\nPending or unknown: " + p + "\nFailed: " + f);
                 });
             }
         }, "chainforge-simulation");
@@ -2584,8 +3245,54 @@ public final class MainView {
         worker.start();
     }
 
+    private String awaitPilotConfirmation(ChainAdapter adapter, long id, ChainAdapter.TransferResult result) throws Exception {
+        String status = result.status().toUpperCase(Locale.ROOT);
+        if (result.hash() == null || result.hash().isBlank() || !Set.of("PENDING", "SUBMITTED").contains(status)) return status;
+        Platform.runLater(() -> {
+            sim.progress = "Waiting for pilot confirmation · " + result.hash();
+            applySimState();
+        });
+        int maxChecks = adapter instanceof BitcoinAdapter ? 450 : 30;
+        for (int check = 0; !stopRequested && check < maxChecks && Set.of("PENDING", "SUBMITTED").contains(status); check++) {
+            Thread.sleep(4000);
+            if (stopRequested) break;
+            ChainAdapter.StatusResult current;
+            try {
+                current = adapter.checkTransactionStatus(result.hash()).join();
+            } catch (Exception e) {
+                continue;
+            }
+            status = current.status().toUpperCase(Locale.ROOT);
+            if (!Set.of("PENDING", "SUBMITTED").contains(status))
+                Repository.updateTx(id, result.hash(), current.fee() == null ? result.fee() : current.fee(), status, current.error());
+        }
+        return status;
+    }
+
+    private boolean approveRemaining(String hash, int count) {
+        var answer = new CompletableFuture<Boolean>();
+        Platform.runLater(() -> {
+            try {
+                answer.complete(!stopRequested && confirm("Pilot confirmed", "Transaction: " + hash
+                        + "\n\nSend the remaining " + count + " planned transfers?"));
+            } catch (Exception e) {
+                answer.completeExceptionally(e);
+            }
+        });
+        return answer.join();
+    }
+
     private VBox settingsPage() {
         VBox v = pageShell("Settings", "Local application settings and security controls.");
+        VBox themePanel = panel();
+        ComboBox<Appearance.Theme> theme = new ComboBox<>();
+        theme.getItems().setAll(Appearance.Theme.values());
+        theme.setValue(appearance.theme());
+        theme.setOnAction(e -> appearance.select(theme.getValue()));
+        theme.setPrefWidth(180);
+        VBox themeField = fieldCard("Theme", theme);
+        theme.setMaxWidth(180);
+        themePanel.getChildren().addAll(section("APPEARANCE"), themeField);
         VBox vault = panel();
         vault.getChildren().addAll(section("WALLET SECURITY"), muted("Private keys are encrypted using AES-256-GCM. Passwords are derived with PBKDF2-HMAC-SHA256 (310,000 iterations). The master password is not stored."), primary("Clear all unlocked keys", () -> {
             unlockedKeys.clear();
@@ -2596,7 +3303,12 @@ public final class MainView {
         db.getChildren().addAll(section("LOCAL DATA"), muted("SQLite database: " + System.getProperty("user.home") + "/.chainforge/chainforge.db"), muted("Wallets, recipients, network definitions and transaction history remain on this device."));
         VBox safety = panel();
         safety.getChildren().addAll(section("NETWORK SAFETY"), muted("Testnets are enabled by default. Mainnet networks (real funds) are disabled until you enable them in Networks and confirm by typing. Only import keys you control, and start with small amounts."), muted("Never share your vault password, private key or seed phrase."));
-        v.getChildren().addAll(vault, db, safety);
+        for (VBox card : List.of(vault, db, safety)) {
+            for (var node : card.getChildren()) {
+                if (node instanceof Label label) label.setWrapText(true);
+            }
+        }
+        v.getChildren().addAll(themePanel, vault, db, safety);
         return v;
     }
 

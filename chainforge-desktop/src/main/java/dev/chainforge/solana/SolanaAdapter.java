@@ -148,9 +148,17 @@ public final class SolanaAdapter implements ChainAdapter {
                 // Poll the canonical signature-status RPC. Never mark a submitted tx as confirmed by assumption.
                 long deadline = System.currentTimeMillis() + 45_000L;
                 while (System.currentTimeMillis() < deadline) {
-                    StatusResult status = toStatusResult(querySignatureStatus(signature));
+                    StatusResult status;
+                    try {
+                        status = toStatusResult(querySignatureStatus(signature));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return new TransferResult(signature, "PENDING", null, "Confirmation check interrupted");
+                    } catch (Exception e) {
+                        return new TransferResult(signature, "PENDING", null, "Confirmation unavailable: " + e.getMessage());
+                    }
                     if ("FAILED".equals(status.status())) {
-                        throw new IllegalStateException(status.error());
+                        return new TransferResult(signature, "FAILED", status.fee(), status.error());
                     }
                     if ("CONFIRMED".equals(status.status())) {
                         return new TransferResult(signature, "CONFIRMED", "network fee (lamports)");
@@ -175,6 +183,28 @@ public final class SolanaAdapter implements ChainAdapter {
         JsonNode root = JSON.readTree(response.body());
         if (root.hasNonNull("error")) throw new IllegalStateException("Solana RPC error: " + root.get("error"));
         return root.path("result");
+    }
+
+    public BigDecimal estimateBatchFee(int transfers) throws Exception {
+        var commitment = Map.of("commitment", "confirmed");
+        String blockhash = rpcCall("getLatestBlockhash", List.of(commitment)).path("value").path("blockhash").asText();
+        if (blockhash.isBlank()) throw new IllegalStateException("Solana did not return a recent blockhash.");
+        var message = new FeeQuoteMessage(blockhash);
+        String encoded = java.util.Base64.getEncoder().encodeToString(message.serialize());
+        var fee = rpcCall("getFeeForMessage", List.of(encoded, commitment)).path("value");
+        if (!fee.isIntegralNumber() || fee.bigIntegerValue().signum() < 0)
+            throw new IllegalStateException("Solana did not return a fee quote.");
+        return new BigDecimal(fee.bigIntegerValue()).multiply(BigDecimal.valueOf(transfers)).movePointLeft(9);
+    }
+
+    // Match the one-signer native transfer without signing or unlocking the selected wallet.
+    private static final class FeeQuoteMessage extends org.p2p.solanaj.core.Message {
+        FeeQuoteMessage(String blockhash) {
+            Account payer = new Account();
+            setFeePayer(payer);
+            addInstruction(SystemProgram.transfer(payer.getPublicKey(), new Account().getPublicKey(), 1));
+            setRecentBlockHash(blockhash);
+        }
     }
 
     /** Native SOL received by the address: recent signatures, then the account's lamport delta per transaction. */

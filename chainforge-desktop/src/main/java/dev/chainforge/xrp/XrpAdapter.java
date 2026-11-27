@@ -136,6 +136,16 @@ public final class XrpAdapter implements ChainAdapter {
         return Math.max(base, Math.min(open, MAX_FEE_DROPS));
     }
 
+    public BigDecimal estimateBatchFee(String sender, BigDecimal total, int transfers) throws Exception {
+        JsonNode account = accountData(sender);
+        if (account == null) throw new IllegalStateException("The XRP sender account is not activated.");
+        BigDecimal fee = BigDecimal.valueOf(feeDrops()).multiply(BigDecimal.valueOf(transfers));
+        BigDecimal balance = new BigDecimal(account.path("Balance").asText("0"));
+        if (balance.subtract(total.multiply(DROPS_PER_XRP)).subtract(fee).compareTo(reserveDrops(account)) < 0)
+            throw new IllegalStateException("Insufficient spendable XRP after accounting for the account reserve and network fees.");
+        return fee.movePointLeft(6);
+    }
+
     /** Reserve (in drops) the account must keep: base reserve + owner reserve per owned object. */
     private BigDecimal reserveDrops(JsonNode acct) {
         BigDecimal base = BigDecimal.valueOf(1_000_000L), inc = BigDecimal.valueOf(200_000L);
@@ -205,17 +215,23 @@ public final class XrpAdapter implements ChainAdapter {
                     }
                 }
                 String hint = engine.equals("tecDST_TAG_NEEDED") ? " Add a destination tag to this recipient." : "";
-                if (claimedFee)
-                    throw new IllegalStateException("XRPL rejected the payment: " + engine + " — " + engineMsg + hint + " (the " + fee + " drop fee is still charged; tx " + hash + ")");
-                if (!applied)
+                if (!applied && !claimedFee)
                     throw new IllegalStateException("XRPL rejected the payment: " + engine + " — " + engineMsg);
 
                 long deadline = System.currentTimeMillis() + CONFIRM_TIMEOUT_MS;
                 while (System.currentTimeMillis() < deadline) {
-                    StatusResult s = statusOf(hash);
+                    StatusResult s;
+                    try {
+                        s = statusOf(hash);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return new TransferResult(hash, "PENDING", fee + " drops", "Confirmation check interrupted");
+                    } catch (Exception e) {
+                        return new TransferResult(hash, "PENDING", fee + " drops", "Confirmation unavailable: " + e.getMessage());
+                    }
                     if ("CONFIRMED".equals(s.status())) return new TransferResult(hash, "CONFIRMED", fee + " drops");
                     if ("FAILED".equals(s.status()))
-                        throw new IllegalStateException("Payment failed on-ledger: " + s.error() + " (tx " + hash + ")");
+                        return new TransferResult(hash, "FAILED", fee + " drops", s.error() + hint);
                     Thread.sleep(2_000L);
                 }
                 return new TransferResult(hash, "PENDING", fee + " drops");

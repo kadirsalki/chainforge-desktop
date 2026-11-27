@@ -73,7 +73,7 @@ public final class BitcoinAdapter implements ChainAdapter {
     private final Map<String, Long> lastStatusCheck = new ConcurrentHashMap<>();
     private volatile long cachedFeeRate;
     private volatile long cachedFeeAt;
-    private final Map<String, Utxo> recentChange = new HashMap<>();
+    private final Map<String, Map<String, Utxo>> recentChange = new HashMap<>();
 
     @Override
     public String family() {
@@ -225,14 +225,52 @@ public final class BitcoinAdapter implements ChainAdapter {
             if (!recentlySpent.contains(u.key())) out.add(u);
         }
         // Esplora now knows about our change outputs; stop tracking those.
-        recentChange.keySet().removeIf(seen::contains);
-        for (Utxo c : recentChange.values()) if (!recentlySpent.contains(c.key())) out.add(c);
+        var walletChange = recentChange.get(address);
+        if (walletChange != null) {
+            walletChange.keySet().removeIf(seen::contains);
+            for (Utxo c : walletChange.values()) if (!recentlySpent.contains(c.key())) out.add(c);
+        }
         out.sort(Comparator.comparingLong(Utxo::value).reversed());
         return out;
     }
 
     private static long fee(int inputs, boolean change, long rate) {
         return (long) Math.ceil((VB_OVERHEAD + (double) VB_INPUT * inputs + VB_OUT_TO + (change ? VB_OUT_CHANGE : 0)) * rate);
+    }
+
+    private record CoinSelection(List<Utxo> inputs, long fee, long change) {
+    }
+
+    private static CoinSelection selectCoins(List<Utxo> available, long sats, long rate) {
+        List<Utxo> inputs = new ArrayList<>();
+        long total = 0;
+        for (Utxo utxo : available) {
+            inputs.add(utxo);
+            total = Math.addExact(total, utxo.value());
+            long withChange = fee(inputs.size(), true, rate);
+            if (total - sats - withChange >= DUST_SATS)
+                return new CoinSelection(inputs, withChange, total - sats - withChange);
+            long noChange = fee(inputs.size(), false, rate);
+            if (total - sats >= noChange && total - sats - noChange < DUST_SATS)
+                return new CoinSelection(inputs, total - sats, 0);
+        }
+        throw new IllegalStateException("Insufficient spendable BTC for amount plus fee at " + rate + " sat/vB.");
+    }
+
+    public BigDecimal estimateBatchFee(String sender, List<BigDecimal> amounts) throws Exception {
+        List<Utxo> available = spendable(sender);
+        long rate = feeRate(), estimated = 0;
+        int changeIndex = 0;
+        for (BigDecimal amount : amounts) {
+            long sats = amount.movePointRight(8).longValueExact();
+            if (sats < DUST_SATS) throw new IllegalArgumentException("A planned Bitcoin transfer is below " + DUST_SATS + " sat.");
+            CoinSelection selection = selectCoins(available, sats, rate);
+            estimated = Math.addExact(estimated, selection.fee());
+            available.removeAll(selection.inputs());
+            if (selection.change() > 0) available.add(new Utxo("estimated-change", changeIndex++, selection.change()));
+            available.sort(Comparator.comparingLong(Utxo::value).reversed());
+        }
+        return BigDecimal.valueOf(estimated, 8);
     }
 
     @Override
@@ -254,31 +292,9 @@ public final class BitcoinAdapter implements ChainAdapter {
                 synchronized (this) {
                     all = spendable(from);
                 }
-                List<Utxo> picked = new ArrayList<>();
-                long total = 0;
-                long feeSats = 0, changeSats = 0;
-                boolean funded = false;
-                for (Utxo u : all) {
-                    picked.add(u);
-                    total += u.value();
-                    long withChange = fee(picked.size(), true, rate);
-                    if (total - sats - withChange >= DUST_SATS) {
-                        feeSats = withChange;
-                        changeSats = total - sats - withChange;
-                        funded = true;
-                        break;
-                    }
-                    long noChange = fee(picked.size(), false, rate);
-                    if (total - sats >= noChange && total - sats - noChange < DUST_SATS) {
-                        feeSats = total - sats; // leftover below dust goes to the miner
-                        funded = true;
-                        break;
-                    }
-                }
-                if (!funded) {
-                    throw new IllegalStateException("Insufficient funds: need " + fmtBtc(sats + fee(Math.max(1, picked.size()), false, rate))
-                            + " BTC (amount + fee at " + rate + " sat/vB), have " + fmtBtc(total) + " BTC spendable.");
-                }
+                CoinSelection selection = selectCoins(all, sats, rate);
+                var picked = selection.inputs();
+                long changeSats = selection.change(), feeSats = selection.fee();
 
                 Transaction tx = new Transaction();
                 tx.addOutput(Coin.ofSat(sats), recipient);
@@ -304,13 +320,14 @@ public final class BitcoinAdapter implements ChainAdapter {
                 }
 
                 synchronized (this) {
+                    var walletChange = recentChange.computeIfAbsent(from, address -> new HashMap<>());
                     for (Utxo u : picked) {
                         recentlySpent.add(u.key());
-                        recentChange.remove(u.key());
+                        walletChange.remove(u.key());
                     }
                     if (changeSats > 0) {
                         Utxo c = new Utxo(txid, 1, changeSats);
-                        recentChange.put(c.key(), c);
+                        walletChange.put(c.key(), c);
                     }
                 }
                 // A Bitcoin block takes ~10 minutes; confirmation is tracked afterwards via checkTransactionStatus.

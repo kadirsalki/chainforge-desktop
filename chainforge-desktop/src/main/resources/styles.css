@@ -77,3 +77,73 @@
 .sim-table .table-row-cell:selected{-fx-background-color:#2f4a8a}
 .sim-table .table-row-cell:selected .table-cell{-fx-text-fill:#ffffff}
 .sim-side{-fx-background-color:#122033;-fx-border-color:#29384d;-fx-border-radius:10;-fx-background-radius:10;-fx-padding:11}
+
+/* Transactions filters */
+.tx-filter-panel {-fx-spacing: 12; -fx-padding: 14;}
+.tx-direction-switch {-fx-background-color: #0d1522; -fx-background-radius: 9; -fx-padding: 4; -fx-alignment: center-left;}
+.tx-direction-switch .filter-toggle {-fx-background-color: transparent; -fx-text-fill: #aebbd6; -fx-padding: 7 11;}
+.tx-direction-switch .filter-toggle:hover {-fx-background-color: #202d47;}
+.tx-direction-switch .filter-toggle:selected {-fx-background-color: #2f4a8a; -fx-text-fill: #f1f5fc;}
+.tx-filter-panel .date-picker {-fx-background-color: #111a27; -fx-background-radius: 8;}
+.tx-filter-panel .date-picker .arrow-button {-fx-background-color: #202d47; -fx-background-radius: 0 8 8 0;}
+.tx-filter-panel .date-picker .arrow-button .arrow,
+.tx-filter-panel .combo-box .arrow-button .arrow {-fx-background-color: #aebbd6;}
+.tx-filter-panel .tx-filter-reset {-fx-padding: 7 11;}
+
+.transaction-table {-fx-background-color: #111a27; -fx-border-color: #29384d; -fx-border-radius: 9; -fx-background-radius: 9; -fx-padding: 1;}
+.transaction-table .column-header-background,
+.transaction-table .column-header,
+.transaction-table .filler {-fx-background-color: #202d3e;}
+.transaction-table .column-header .label {-fx-alignment: center-left; -fx-padding: 0 7; -fx-text-fill: #c4d0e2;}
+.transaction-table .table-row-cell:filled {-fx-background-color: #121e2d;}
+.transaction-table .table-row-cell:filled:odd {-fx-background-color: #162334;}
+.transaction-table .table-row-cell:filled:hover {-fx-background-color: #202d47;}
+.transaction-table .table-row-cell:filled:selected {-fx-background-color: #2f4a8a;}
+.transaction-table .table-row-cell:empty,
+.transaction-table .virtual-flow .corner {-fx-background-color: #111a27;}
+.transaction-table .table-cell {-fx-alignment: center-left; -fx-padding: 0 7; -fx-border-color: transparent; -fx-text-fill: #dce5f2;}
+.transaction-table .hyperlink {-fx-padding: 0; -fx-border-insets: 0;}
+
+.wallet-menu {-fx-padding: 0 9; -fx-min-height: 38; -fx-cursor: hand;}
+.wallet-menu > .label {-fx-padding: 0 6; -fx-text-fill: #dce5f2;}
+.wallet-menu.primary > .label {-fx-text-fill: white;}
+.wallet-menu > .arrow-button {-fx-padding: 0 4 0 6;}
+.wallet-menu > .arrow-button > .arrow {-fx-background-color: #dce5f2;}
+.wallet-menu:focused {-fx-border-color: #91a7ff; -fx-border-radius: 8;}
+.wallet-menu .context-menu {-fx-background-color: #182333; -fx-border-color: #2a394d; -fx-background-radius: 8; -fx-border-radius: 8; -fx-padding: 4;}
+.wallet-menu-item {-fx-background-color: #182333; -fx-padding: 8 12;}
+.wallet-menu-item > .label {-fx-text-fill: #dce5f2;}
+.wallet-menu-item:focused {-fx-background-color: #2f4a8a; -fx-background-radius: 5;}
+.wallet-delete {-fx-background-color: transparent; -fx-border-color: transparent; -fx-text-fill: #ffa0aa;}
+.wallet-delete:hover {-fx-background-color: #40242b;}
+
+.sim-side-title {-fx-font-size: 10px; -fx-font-weight: bold;}
+.text-success {-fx-text-fill: #57d6ad;}
+.text-warning {-fx-text-fill: #f4cb76;}
+.toggle-button:focused, .menu-button:focused {-fx-border-color: #7187ff; -fx-border-radius: 8;}
+.toggle-button:disabled, .button:disabled {-fx-opacity: 0.55;}
+.sim-side:focused {-fx-border-color: #7187ff;}
+
+/* Keep inline actions and single-line fields aligned across pages. */
+.content .button, .content .menu-button, .content .text-field,
+.content .password-field, .content .combo-box, .content .date-picker {
+    -fx-min-height: 40;
+    -fx-pref-height: 40;
+    -fx-max-height: 40;
+}
+.content .button {-fx-padding: 0 14;}
+.content .text-field, .content .password-field {-fx-padding: 0 10;}
+.content .combo-box {-fx-padding: 0 8;}
+.content .date-picker > .text-field {
+    -fx-min-height: 0;
+    -fx-pref-height: -1;
+    -fx-max-height: 40;
+    -fx-background-radius: 8 0 0 8;
+    -fx-border-radius: 8 0 0 8;
+}
+.content .tx-direction-switch .filter-toggle {
+    -fx-min-height: 32;
+    -fx-pref-height: 32;
+    -fx-max-height: 32;
+    -fx-padding: 0 11;
+}
