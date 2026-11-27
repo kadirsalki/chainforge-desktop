@@ -25,11 +25,22 @@ public final class Repository {
     }
 
     public record Tx(long id, String network, String hash, String from, String to, String amount, String asset,
-                     String fee, String status, String error, String created) {
+                     String fee, String status, String error, String created, String direction) {
     }
 
     public record Network(long id, String name, String family, String key, String chainId, String rpc, String explorer,
-                          boolean testnet, boolean enabled) {
+                          boolean testnet, boolean enabled, String nativeSymbol) {
+    }
+
+    /** Ticker of the native coin when a network row has none stored (ETH for any EVM chain, SOL, BTC, XRP). */
+    public static String defaultSymbol(String family) {
+        if (family == null) return "ETH";
+        return switch (family.toUpperCase()) {
+            case "SOLANA" -> "SOL";
+            case "BITCOIN" -> "BTC";
+            case "XRP" -> "XRP";
+            default -> "ETH";
+        };
     }
 
     public record Token(long id, String network, String contract, String symbol, String name, int decimals) {
@@ -87,6 +98,32 @@ public final class Repository {
         }
     }
 
+    /**
+     * Deletes a recipient group together with all of its recipients (one transaction), so the
+     * addresses become free to be imported into another group. Returns the number of removed recipients.
+     */
+    public static int deleteRecipientGroup(long groupId) throws SQLException {
+        try (var c = Database.connect()) {
+            c.setAutoCommit(false);
+            try {
+                int removed;
+                try (var p = c.prepareStatement("DELETE FROM recipients WHERE group_id=?")) {
+                    p.setLong(1, groupId);
+                    removed = p.executeUpdate();
+                }
+                try (var p = c.prepareStatement("DELETE FROM recipient_groups WHERE id=?")) {
+                    p.setLong(1, groupId);
+                    p.executeUpdate();
+                }
+                c.commit();
+                return removed;
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            }
+        }
+    }
+
     public static List<Recipient> recipients(String network) throws SQLException {
         return recipients(network, null);
     }
@@ -136,15 +173,49 @@ public final class Repository {
 
     public static List<Tx> transactions() throws SQLException {
         var out = new ArrayList<Tx>();
-        try (var c = Database.connect(); var s = c.createStatement(); var r = s.executeQuery("SELECT * FROM transactions ORDER BY id DESC")) {
+        try (var c = Database.connect(); var s = c.createStatement(); var r = s.executeQuery("SELECT * FROM transactions ORDER BY created_at DESC, id DESC")) {
+            while (r.next()) out.add(txFrom(r));
+        }
+        return out;
+    }
+
+    private static Tx txFrom(java.sql.ResultSet r) throws SQLException {
+        String dir = r.getString("direction");
+        return new Tx(r.getLong("id"), r.getString("network_key"), r.getString("tx_hash"), r.getString("from_address"), r.getString("to_address"), r.getString("amount"), r.getString("asset"), r.getString("fee"), r.getString("status"), r.getString("error"), r.getString("created_at"), dir == null || dir.isBlank() ? "OUT" : dir);
+    }
+
+    /** Transfers sent by one simulation batch, in execution order. */
+    public static List<Tx> txsForJob(long jobId) throws SQLException {
+        var out = new ArrayList<Tx>();
+        try (var c = Database.connect(); var p = c.prepareStatement("SELECT * FROM transactions WHERE job_id=? ORDER BY id ASC")) {
+            p.setLong(1, jobId);
+            try (var r = p.executeQuery()) {
+                while (r.next()) out.add(txFrom(r));
+            }
+        }
+        return out;
+    }
+
+    public record SimJob(long id, String network, String status, int recipients, String config, String created) {
+    }
+
+    public static List<SimJob> simulationJobs() throws SQLException {
+        var out = new ArrayList<SimJob>();
+        try (var c = Database.connect(); var s = c.createStatement(); var r = s.executeQuery("SELECT * FROM simulation_jobs ORDER BY id DESC LIMIT 50")) {
             while (r.next())
-                out.add(new Tx(r.getLong("id"), r.getString("network_key"), r.getString("tx_hash"), r.getString("from_address"), r.getString("to_address"), r.getString("amount"), r.getString("asset"), r.getString("fee"), r.getString("status"), r.getString("error"), r.getString("created_at")));
+                out.add(new SimJob(r.getLong("id"), r.getString("network_key"), r.getString("status"), r.getInt("recipient_count"), r.getString("config_json"), r.getString("created_at")));
         }
         return out;
     }
 
     public static long addTx(String network, String hash, String from, String to, String amount, String asset, String fee, String status, String error) throws SQLException {
-        try (var c = Database.connect(); var p = c.prepareStatement("INSERT INTO transactions(network_key,tx_hash,from_address,to_address,amount,asset,fee,status,error) VALUES(?,?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS)) {
+        return addTx(network, hash, from, to, amount, asset, fee, status, error, null);
+    }
+
+    public static long addTx(String network, String hash, String from, String to, String amount, String asset, String fee, String status, String error, Long jobId) throws SQLException {
+        try (var c = Database.connect(); var p = c.prepareStatement("INSERT INTO transactions(network_key,tx_hash,from_address,to_address,amount,asset,fee,status,error,job_id) VALUES(?,?,?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS)) {
+            if (jobId == null || jobId <= 0) p.setNull(10, java.sql.Types.INTEGER);
+            else p.setLong(10, jobId);
             p.setString(1, network);
             p.setString(2, hash);
             p.setString(3, from);
@@ -158,6 +229,36 @@ public final class Repository {
             try (var k = p.getGeneratedKeys()) {
                 return k.next() ? k.getLong(1) : -1;
             }
+        }
+    }
+
+    /** Hashes already stored as received by this wallet on this network. */
+    public static java.util.Set<String> knownIncomingHashes(String network, String address) throws SQLException {
+        var out = new java.util.HashSet<String>();
+        try (var c = Database.connect(); var p = c.prepareStatement("SELECT tx_hash FROM transactions WHERE direction='IN' AND network_key=? AND to_address=?")) {
+            p.setString(1, network);
+            p.setString(2, address);
+            try (var r = p.executeQuery()) {
+                while (r.next()) out.add(r.getString(1));
+            }
+        }
+        return out;
+    }
+
+    /** Stores a received transfer. Returns true if it was new (duplicates are ignored). */
+    public static boolean addIncomingTx(String network, String hash, String from, String to, String amount, String asset, String fee, String status, String timestamp) throws SQLException {
+        String sql = "INSERT OR IGNORE INTO transactions(network_key,tx_hash,from_address,to_address,amount,asset,fee,status,direction,created_at) VALUES(?,?,?,?,?,?,?,?,'IN',COALESCE(?,CURRENT_TIMESTAMP))";
+        try (var c = Database.connect(); var p = c.prepareStatement(sql)) {
+            p.setString(1, network);
+            p.setString(2, hash);
+            p.setString(3, from);
+            p.setString(4, to);
+            p.setString(5, amount);
+            p.setString(6, asset);
+            p.setString(7, fee);
+            p.setString(8, status);
+            p.setString(9, timestamp);
+            return p.executeUpdate() > 0;
         }
     }
 
@@ -208,13 +309,17 @@ public final class Repository {
         var out = new ArrayList<Network>();
         try (var c = Database.connect(); var s = c.createStatement(); var r = s.executeQuery("SELECT * FROM networks ORDER BY id")) {
             while (r.next())
-                out.add(new Network(r.getLong("id"), r.getString("name"), r.getString("family"), r.getString("network_key"), r.getString("chain_id"), r.getString("rpc_url"), r.getString("explorer_url"), r.getInt("is_testnet") == 1, r.getInt("enabled") == 1));
+                out.add(new Network(r.getLong("id"), r.getString("name"), r.getString("family"), r.getString("network_key"), r.getString("chain_id"), r.getString("rpc_url"), r.getString("explorer_url"), r.getInt("is_testnet") == 1, r.getInt("enabled") == 1, symbolOrDefault(r.getString("native_symbol"), r.getString("family"))));
         }
         return out;
     }
 
-    public static void saveNetwork(String name, String family, String key, String chainId, String rpc, String explorer, boolean testnet) throws SQLException {
-        try (var c = Database.connect(); var p = c.prepareStatement("INSERT INTO networks(name,family,network_key,chain_id,rpc_url,explorer_url,is_testnet,enabled) VALUES(?,?,?,?,?,?,?,1) ON CONFLICT(network_key) DO UPDATE SET name=excluded.name,family=excluded.family,chain_id=excluded.chain_id,rpc_url=excluded.rpc_url,explorer_url=excluded.explorer_url,is_testnet=excluded.is_testnet")) {
+    private static String symbolOrDefault(String symbol, String family) {
+        return symbol == null || symbol.isBlank() ? defaultSymbol(family) : symbol.trim();
+    }
+
+    public static void saveNetwork(String name, String family, String key, String chainId, String rpc, String explorer, boolean testnet, String nativeSymbol) throws SQLException {
+        try (var c = Database.connect(); var p = c.prepareStatement("INSERT INTO networks(name,family,network_key,chain_id,rpc_url,explorer_url,is_testnet,enabled,native_symbol) VALUES(?,?,?,?,?,?,?,1,?) ON CONFLICT(network_key) DO UPDATE SET name=excluded.name,family=excluded.family,chain_id=excluded.chain_id,rpc_url=excluded.rpc_url,explorer_url=excluded.explorer_url,native_symbol=excluded.native_symbol")) {
             p.setString(1, name);
             p.setString(2, family);
             p.setString(3, key);
@@ -222,6 +327,7 @@ public final class Repository {
             p.setString(5, rpc);
             p.setString(6, explorer);
             p.setInt(7, testnet ? 1 : 0);
+            p.setString(8, symbolOrDefault(nativeSymbol, family));
             p.executeUpdate();
         }
     }

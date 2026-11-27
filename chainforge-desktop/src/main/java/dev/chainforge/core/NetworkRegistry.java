@@ -1,14 +1,12 @@
 package dev.chainforge.core;
 
-import dev.chainforge.evm.EvmSepoliaAdapter;
-
 import java.util.*;
 
 public final class NetworkRegistry {
     private final Map<String, ChainAdapter> adapters = new LinkedHashMap<>();
 
+    /** Adapters are created per configured network by {@link AdapterFactory}; register extras here if needed. */
     public NetworkRegistry() {
-        register(new EvmSepoliaAdapter());
     }
 
     public void register(ChainAdapter a) {

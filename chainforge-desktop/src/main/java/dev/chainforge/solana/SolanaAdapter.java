@@ -7,7 +7,6 @@ import org.p2p.solanaj.core.Account;
 import org.p2p.solanaj.core.PublicKey;
 import org.p2p.solanaj.core.Transaction;
 import org.p2p.solanaj.programs.SystemProgram;
-import org.p2p.solanaj.rpc.Cluster;
 import org.p2p.solanaj.rpc.RpcClient;
 
 import java.math.BigDecimal;
@@ -17,22 +16,32 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Native SOL transfers on Solana Devnet. Private key is a Base58-encoded 64-byte keypair.
+ * Native SOL transfers on one configured Solana network (devnet, mainnet-beta, ...). Private key is a Base58-encoded 64-byte keypair.
  */
 public final class SolanaAdapter implements ChainAdapter {
     private static final long LAMPORTS_PER_SOL = 1_000_000_000L;
-    private static final URI DEVNET_RPC = URI.create("https://api.devnet.solana.com");
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
 
+    private final String networkKey;
+    private final String rpc;
+
+    public SolanaAdapter(String networkKey, String rpc) {
+        if (rpc == null || rpc.isBlank()) throw new IllegalArgumentException("Solana RPC URL is empty for " + networkKey);
+        this.networkKey = networkKey;
+        this.rpc = rpc.trim();
+    }
+
     private RpcClient client() {
-        return new RpcClient(Cluster.DEVNET);
+        return new RpcClient(rpc);
     }
 
     /**
@@ -50,7 +59,7 @@ public final class SolanaAdapter implements ChainAdapter {
                         Map.of("searchTransactionHistory", true)
                 )
         );
-        HttpRequest request = HttpRequest.newBuilder(DEVNET_RPC)
+        HttpRequest request = HttpRequest.newBuilder(URI.create(rpc))
                 .timeout(Duration.ofSeconds(15))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(requestBody)))
@@ -94,7 +103,7 @@ public final class SolanaAdapter implements ChainAdapter {
 
     @Override
     public String networkKey() {
-        return "solana-devnet";
+        return networkKey;
     }
 
     @Override
@@ -102,7 +111,7 @@ public final class SolanaAdapter implements ChainAdapter {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 if (!"SOL".equalsIgnoreCase(asset))
-                    throw new IllegalArgumentException("Only native SOL is enabled on Devnet.");
+                    throw new IllegalArgumentException("Only native SOL is enabled.");
                 long lamports = client().getApi().getBalance(new PublicKey(address));
                 return BigDecimal.valueOf(lamports).divide(BigDecimal.valueOf(LAMPORTS_PER_SOL), 9, RoundingMode.DOWN).stripTrailingZeros().toPlainString();
             } catch (Exception e) {
@@ -127,7 +136,7 @@ public final class SolanaAdapter implements ChainAdapter {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 if (!"SOL".equalsIgnoreCase(asset))
-                    throw new IllegalArgumentException("Only native SOL is enabled on Devnet.");
+                    throw new IllegalArgumentException("Only native SOL is enabled.");
                 long lamports = amount.multiply(BigDecimal.valueOf(LAMPORTS_PER_SOL)).setScale(0, RoundingMode.DOWN).longValueExact();
                 if (lamports <= 0) throw new IllegalArgumentException("Amount is below one lamport.");
                 Account signer = new Account(SolanaKeys.decode(privateKey));
@@ -149,6 +158,55 @@ public final class SolanaAdapter implements ChainAdapter {
                     Thread.sleep(1_000L);
                 }
                 return new TransferResult(signature, "PENDING", "confirmation not yet observed");
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private JsonNode rpcCall(String method, List<Object> params) throws Exception {
+        Map<String, Object> body = Map.of("jsonrpc", "2.0", "id", 1, "method", method, "params", params);
+        HttpRequest request = HttpRequest.newBuilder(URI.create(rpc)).timeout(Duration.ofSeconds(20))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body))).build();
+        HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300)
+            throw new IllegalStateException("Solana RPC HTTP " + response.statusCode() + (response.statusCode() == 429 ? " (rate limited)" : ""));
+        JsonNode root = JSON.readTree(response.body());
+        if (root.hasNonNull("error")) throw new IllegalStateException("Solana RPC error: " + root.get("error"));
+        return root.path("result");
+    }
+
+    /** Native SOL received by the address: recent signatures, then the account's lamport delta per transaction. */
+    @Override
+    public CompletableFuture<List<IncomingTx>> fetchIncoming(String address, Set<String> knownHashes) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                SolanaKeys.validateAddress(address);
+                List<IncomingTx> out = new ArrayList<>();
+                JsonNode sigs = rpcCall("getSignaturesForAddress", List.of(address, Map.of("limit", 20)));
+                for (JsonNode s : sigs) {
+                    String sig = s.path("signature").asText();
+                    if (knownHashes.contains(sig) || (s.hasNonNull("err"))) continue;
+                    Thread.sleep(250); // public RPC nodes rate-limit bursts
+                    JsonNode tx = rpcCall("getTransaction", List.of(sig, Map.of("encoding", "jsonParsed", "maxSupportedTransactionVersion", 0)));
+                    if (tx.isNull() || tx.path("meta").path("err").isObject()) continue;
+                    JsonNode keys = tx.path("transaction").path("message").path("accountKeys");
+                    int idx = -1;
+                    String payer = null;
+                    for (int i = 0; i < keys.size(); i++) {
+                        String k = keys.get(i).isObject() ? keys.get(i).path("pubkey").asText() : keys.get(i).asText();
+                        if (i == 0) payer = k;
+                        if (k.equals(address)) idx = i;
+                    }
+                    if (idx < 0 || address.equals(payer)) continue; // not involved, or sent by this wallet
+                    long delta = tx.path("meta").path("postBalances").path(idx).asLong() - tx.path("meta").path("preBalances").path(idx).asLong();
+                    if (delta <= 0) continue;
+                    String amount = BigDecimal.valueOf(delta).divide(BigDecimal.valueOf(LAMPORTS_PER_SOL), 9, RoundingMode.DOWN).stripTrailingZeros().toPlainString();
+                    long bt = tx.path("blockTime").asLong(0);
+                    out.add(new IncomingTx(sig, payer, address, amount, NATIVE, "CONFIRMED", null, bt > 0 ? ChainAdapter.utc(bt) : null));
+                }
+                return out;
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

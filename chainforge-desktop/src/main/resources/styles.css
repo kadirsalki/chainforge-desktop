@@ -40,6 +40,11 @@
 .tx-status-success{-fx-background-color:#173b35;-fx-text-fill:#61dfb7;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
 .tx-status-failed{-fx-background-color:#40242b;-fx-text-fill:#ff9aa8;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
 .tx-status-pending{-fx-background-color:#3b321e;-fx-text-fill:#f4cb76;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.transaction-amount-in{-fx-text-fill:#61dfb7;-fx-font-size:13px;-fx-font-weight:bold}
+.tx-dir-in{-fx-background-color:#173b35;-fx-text-fill:#61dfb7;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.tx-dir-out{-fx-background-color:#26324a;-fx-text-fill:#9db4e6;-fx-padding:6 9;-fx-background-radius:14;-fx-font-size:9px;-fx-font-weight:bold}
+.filter-toggle{-fx-background-color:#1b2538;-fx-text-fill:#aebbd6;-fx-background-radius:8;-fx-padding:7 13;-fx-cursor:hand}
+.filter-toggle:selected{-fx-background-color:#2f4a8a;-fx-text-fill:#f1f5fc;-fx-font-weight:bold}
 .polling-indicator{-fx-text-fill:#61dfb7;-fx-font-size:11px}
 
 
@@ -64,3 +69,11 @@
 .network-card .button,.recipient-card .button{-fx-min-height:34}
 .text-area{-fx-border-radius:9;-fx-background-radius:9}
 .list-view:focused,.text-area:focused{-fx-border-color:#7187ff}
+
+.sim-table{-fx-background-color:#0f1826;-fx-control-inner-background:#0f1826;-fx-control-inner-background-alt:#101c2c;-fx-table-cell-border-color:#1f2b3f;-fx-border-color:#29384d;-fx-border-radius:8;-fx-background-radius:8}
+.sim-table .column-header,.sim-table .filler{-fx-background-color:#18263a;-fx-border-color:#29384d}
+.sim-table .column-header .label{-fx-text-fill:#aebbd6;-fx-font-size:11px;-fx-font-weight:bold}
+.sim-table .table-cell{-fx-text-fill:#e4ecfa;-fx-font-size:12px}
+.sim-table .table-row-cell:selected{-fx-background-color:#2f4a8a}
+.sim-table .table-row-cell:selected .table-cell{-fx-text-fill:#ffffff}
+.sim-side{-fx-background-color:#122033;-fx-border-color:#29384d;-fx-border-radius:10;-fx-background-radius:10;-fx-padding:11}
